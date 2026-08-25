@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J Law Scanner — M.E.T.S. / M.E.T.A.</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>J Law Scanner <span class="sub">M.E.T.S. / M.E.T.A. — HK + US</span></h1>
+  <div class="actions">
+    {% if scanning %}
+      <span class="badge running">Scanning… (this can take a few minutes)</span>
+    {% else %}
+      <form method="post" action="/run" style="display:inline">
+        <button class="btn">Run Scan</button>
+      </form>
+    {% endif %}
+  </div>
+</header>
+
+{% if not scan %}
+  <div class="empty">
+    <p>No scan yet. Click <b>Run Scan</b> to detect BUY / SELL M.E.T.A. setups across the HK + US universe.</p>
+    <p class="hint">The engine scores each stock on J Law's edges: strong trend, relative strength, S/R flip, MA cluster, trend-line bounce, low-volume pullback. A BUY needs ≥3 edges stacked at one price (a M.E.T.A. node).</p>
+  </div>
+{% else %}
+  <div class="markets">
+    {% for market, data in scan.items() %}
+    <section class="market">
+      <h2>{{ market.upper() }} <span class="count">scanned {{ data.scanned }}</span></h2>
+
+      <h3 class="buy">🟢 BUY — top {{ data.buys|length }}</h3>
+      {% if data.buys %}
+      <table>
+        <thead><tr><th>Symbol</th><th>Score</th><th>Price</th><th>RS%</th><th>R:R</th><th></th></tr></thead>
+        <tbody>
+        {% for r in data.buys %}
+          <tr>
+            <td class="sym">{{ r.symbol }}</td>
+            <td>{{ r.score }}</td>
+            <td>{{ r.price }}</td>
+            <td class="{{ 'pos' if r.rs >= 0 else 'neg' }}">{{ r.rs }}+%</td>
+            <td>{{ r.rr }}</td>
+            <td><a href="/detail/{{ market }}/{{ r.symbol }}">detail</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="none">No full M.E.T.A. BUY setups this pass.</p>{% endif %}
+
+      <h3 class="sell">🔴 SELL — top {{ data.sells|length }}</h3>
+      {% if data.sells %}
+      <table>
+        <thead><tr><th>Symbol</th><th>Bear edges</th><th>Price</th><th>RS%</th><th></th></tr></thead>
+        <tbody>
+        {% for r in data.sells %}
+          <tr>
+            <td class="sym">{{ r.symbol }}</td>
+            <td>{{ r.bear_edges|length }}</td>
+            <td>{{ r.price }}</td>
+            <td class="{{ 'pos' if r.rs >= 0 else 'neg' }}">{{ r.rs }}+%</td>
+            <td><a href="/detail/{{ market }}/{{ r.symbol }}">detail</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="none">No SELL/distribution signals this pass.</p>{% endif %}
+    </section>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<footer>J Law M.E.T.S. framework · yfinance data · for education, not financial advice.</footer>
+</body>
+</html>

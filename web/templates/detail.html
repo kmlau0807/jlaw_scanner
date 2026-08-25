@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ rec.symbol if rec else 'Detail' }} — J Law Scanner</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <a href="/" class="back">← Back</a>
+  <h1>
+    {% if rec %}
+      {{ rec.symbol }}
+      <span class="badge {{ 'buy' if side=='BUY' else 'sell' if side=='SELL' else 'hold' }}">{{ side or 'HOLD' }}</span>
+    {% else %} Not found {% endif %}
+  </h1>
+</header>
+
+{% if not rec %}
+  <p class="empty">This symbol is not in the latest scan result. Run a scan first.</p>
+{% else %}
+<div class="grid">
+  <section class="panel explain">
+    <h3>J Law M.E.T.A. read</h3>
+    <ul class="edges">
+      {% for e in rec.explanation %}
+        <li>{{ e }}</li>
+      {% endfor %}
+    </ul>
+    <table class="levels">
+      <tr><td>Price</td><td>{{ rec.price }}</td></tr>
+      <tr><td>Confluence score</td><td>{{ rec.score }} edges</td></tr>
+      <tr><td>Relative strength</td><td class="{{ 'pos' if rec.rs >= 0 else 'neg' }}">{{ rec.rs }}+%</td></tr>
+      <tr><td>Strong-trend</td><td>{{ rec.strong_trend }}</td></tr>
+      {% if rec.entry %}
+      <tr><td>Entry</td><td>{{ rec.entry }}</td></tr>
+      <tr><td>Stop</td><td>{{ rec.stop }}</td></tr>
+      <tr><td>Target</td><td>{{ rec.target }}</td></tr>
+      <tr><td>Reward:Risk</td><td>{{ rec.rr }}:1</td></tr>
+      {% endif %}
+      <tr><td>As of</td><td>{{ rec.last_date }}</td></tr>
+    </table>
+    <p class="hint">M.E.T.A. = multiple independent edges stacked at one price. Enter only there; size so a 2–3% stop keeps R:R ≥ 3:1. Not financial advice.</p>
+  </section>
+
+  <section class="panel chart">
+    <h3>Chart (J Law M.E.T.A. view)</h3>
+    {% if chart_b64 %}
+      <img class="snap" src="{{ chart_b64 }}" alt="{{ rec.symbol }} chart">
+    {% else %}
+      <p class="empty">Chart data unavailable for this symbol.</p>
+    {% endif %}
+    <p class="hint">
+      Green = entry · red = stop · blue = target. MAs: 10/20/50/200.
+      <a href="{{ tv_url }}" target="_blank" rel="noopener">Open the full interactive chart on TradingView &#8599;</a>
+      (log in there with your account to use all features).
+    </p>
+  </section>
+</div>
+{% endif %}
+<footer>J Law M.E.T.S. framework · yfinance data · education only.</footer>
+</body>
+</html>
