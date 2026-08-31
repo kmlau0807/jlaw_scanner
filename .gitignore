@@ -22,3 +22,10 @@ env/
 .DS_Store
 Thumbs.db
 *.swp
+
+# === Runtime logs / scratch (generated, not source) ===
+daily_log.txt
+run_daily.log
+_manual_run.txt
+_refresh_scan.txt
+*.bak

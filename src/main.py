@@ -7,6 +7,8 @@ Usage
   python run.py scan --email        # scan + send the report by email
   python run.py email-test          # send a test email (checks SMTP creds)
   python run.py schedule            # run the daily scheduler (APScheduler)
+  python run.py refresh-hk          # refresh universe/hk.csv from live HSI+HSCEI
+  python run.py refresh-us          # refresh universe/us.csv from live S&P 500 + Nasdaq-100
 
 Config is read from config.ini in the project root.
 """
@@ -23,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src import scanner as scn
 from src import reporter as rep
 from src import emailer
+from src import universe_builder as ub
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -62,12 +65,26 @@ def do_scan(cfg: dict, send_email: bool = False):
         rs_map=rs_map(cfg),
     )
     print(rep.to_text(scan))
-    # persist for the web UI (Phase 2) to read without re-scanning
+    # persist for the web UI (Phase 2) to read without re-scanning.
+    # Retry a few times: on Windows the file can be momentarily locked by an
+    # editor / AV scan the user has open, which must not silently drop the data.
     try:
-        import json
+        import json as _json
+        import time as _time
 
-        with open(os.path.join(ROOT, "scan_result.json"), "w", encoding="utf-8") as f:
-            json.dump(scan, f, ensure_ascii=False, indent=2, default=str)
+        path = os.path.join(ROOT, "scan_result.json")
+        data = _json.dumps(scan, ensure_ascii=False, indent=2, default=str)
+        last_err = None
+        for _ in range(5):
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(data)
+                break
+            except (PermissionError, OSError) as e:  # noqa: BLE001
+                last_err = e
+                _time.sleep(0.5)
+        else:
+            log.warning("could not persist scan_result.json: %s", last_err)
     except Exception as e:  # noqa: BLE001
         log.warning("could not persist scan_result.json: %s", e)
     if send_email:
@@ -82,6 +99,8 @@ def main(argv=None):
     sub.add_parser("scan").add_argument("--email", action="store_true")
     sub.add_parser("email-test")
     sub.add_parser("schedule")
+    sub.add_parser("refresh-hk")
+    sub.add_parser("refresh-us")
     args = p.parse_args(argv)
 
     cfg = load_config()
@@ -103,6 +122,22 @@ def main(argv=None):
             int(cfg.get("cron_minute", 30)),
             cfg.get("timezone", "Asia/Hong_Kong"),
         )
+    elif args.cmd == "refresh-hk":
+        stats = ub.refresh_hk_universe()
+        print(f"HK universe refreshed: {stats['n_before']} -> {stats['n_after']} "
+              f"(live sources={stats['live_n']}, added={stats['n_added']})")
+        if stats["manual_added"]:
+            print("manual overrides added:", ", ".join(stats["manual_added"]))
+        if stats["added"]:
+            print("newly added:", ", ".join(stats["added"]))
+    elif args.cmd == "refresh-us":
+        stats = ub.refresh_us_universe()
+        print(f"US universe refreshed: {stats['n_before']} -> {stats['n_after']} "
+              f"(live sources={stats['live_n']}, added={stats['n_added']})")
+        if stats["manual_added"]:
+            print("manual overrides added:", ", ".join(stats["manual_added"]))
+        if stats["added"]:
+            print("newly added:", ", ".join(stats["added"]))
 
 
 if __name__ == "__main__":

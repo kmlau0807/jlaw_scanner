@@ -13,6 +13,7 @@ import base64
 import logging
 import re
 import smtplib
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
@@ -67,6 +68,32 @@ def build_message(cfg: dict, html: str, text: str, images=None) -> MIMEMultipart
     return msg
 
 
+def _smtp_send(cfg: dict, msg, retries: int = 3, delay: int = 15) -> bool:
+    """Open a fresh Gmail SMTP connection and send `msg`.
+
+    Retries on transient failures (e.g. 'Server not connected', timeouts)
+    so a single dropped connection does not sink the whole daily report.
+    """
+    recipients = [r.strip() for r in cfg["recipients"].split(",") if r.strip()]
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            with smtplib.SMTP(cfg["smtp_host"], int(cfg["smtp_port"]), timeout=30) as s:
+                s.ehlo()
+                s.starttls()
+                s.ehlo()
+                s.login(cfg["sender"], cfg["password"])
+                s.sendmail(cfg["sender"], recipients, msg.as_string())
+            return True
+        except Exception as e:  # noqa: BLE001
+            last_exc = e
+            logger.warning("email attempt %d/%d failed: %s", attempt, retries, e)
+            if attempt < retries:
+                time.sleep(delay)
+    logger.error("email failed after %d attempts: %s", retries, last_exc)
+    return False
+
+
 def send(scan: dict, cfg: dict) -> bool:
     chart_top_n = int(cfg.get("chart_top_n", 5))
     images, cids = _build_images(scan, chart_top_n)
@@ -75,18 +102,10 @@ def send(scan: dict, cfg: dict) -> bool:
     cfg = dict(cfg)
     cfg["date"] = ""
     msg = build_message(cfg, html, text, images)
-    try:
-        with smtplib.SMTP(cfg["smtp_host"], int(cfg["smtp_port"]), timeout=30) as s:
-            s.ehlo()
-            s.starttls()
-            s.ehlo()
-            s.login(cfg["sender"], cfg["password"])
-            s.sendmail(cfg["sender"], cfg["recipients"].split(","), msg.as_string())
+    ok = _smtp_send(cfg, msg)
+    if ok:
         logger.info("email sent to %s (%d charts)", cfg["recipients"], len(images))
-        return True
-    except Exception as e:  # noqa: BLE001
-        logger.error("email failed: %s", e)
-        return False
+    return ok
 
 
 def send_test(cfg: dict) -> bool:
@@ -95,12 +114,7 @@ def send_test(cfg: dict) -> bool:
     cfg = dict(cfg)
     cfg["date"] = "(test)"
     msg = build_message(cfg, html, text)
-    try:
-        with smtplib.SMTP(cfg["smtp_host"], int(cfg["smtp_port"]), timeout=30) as s:
-            s.ehlo(); s.starttls(); s.ehlo()
-            s.login(cfg["sender"], cfg["password"])
-            s.sendmail(cfg["sender"], cfg["recipients"].split(","), msg.as_string())
-        return True
-    except Exception as e:  # noqa: BLE001
-        logger.error("test email failed: %s", e)
-        return False
+    ok = _smtp_send(cfg, msg)
+    if not ok:
+        logger.error("test email failed")
+    return ok
