@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J Law Scanner — My Holdings</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>My Holdings <span class="sub">bookkeeping + price alerts</span></h1>
+  <div class="actions">
+    <a class="btn" href="/">Back to Scanner</a>
+  </div>
+</header>
+
+{% if alerts %}
+  <div class="alerts">
+    <h2>Price Alerts</h2>
+    <ul>
+      {% for a in alerts %}
+        <li class="{{ 'hit' if a.alert in ('TARGET HIT','STOP HIT') else 'near' }}">
+          <b>{{ a.symbol }}</b> ({{ a.market.upper() }}) — {{ a.alert }}
+          &nbsp; now {{ "%.2f"|format(a.price) }} / target {{ "%.2f"|format(a.target) if a.target else '-' }}
+          &nbsp; (P/L {{ "%+.1f"|format(a.pnl_pct) }}%)
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+<section class="holdings">
+  <h2>Holdings</h2>
+  {% if not holdings %}
+    <p class="none">No holdings yet. Log a buy below to start tracking.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Mkt</th><th>Buy</th><th>Qty</th>
+          <th>Now</th><th>P/L%</th><th>Target</th><th>Stop</th>
+          <th>To Target</th><th>Alert</th><th>Note</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for h in holdings %}
+        <tr class="{{ 'row-hit' if h.alert in ('TARGET HIT','STOP HIT') else ('row-near' if h.alert == 'APPROACHING' else '') }}">
+          <td class="sym"><a href="https://www.tradingview.com/chart/?symbol={{ tv(h.symbol, h.market) }}" target="_blank">{{ h.symbol }}</a></td>
+          <td>{{ h.market.upper() }}</td>
+          <td>{{ "%.2f"|format(h.buy_price) }}</td>
+          <td>{{ "%.0f"|format(h.qty) }}</td>
+          <td>{{ "%.2f"|format(h.price) }}{% if not h.live %} <span class="stale">*</span>{% endif %}</td>
+          <td class="{{ 'pos' if h.pnl_pct >= 0 else 'neg' }}">{{ "%+.1f"|format(h.pnl_pct) }}%</td>
+          <td>{{ "%.2f"|format(h.target) if h.target else '-' }}{% if h.auto_target %} <span class="hint">auto</span>{% endif %}</td>
+          <td>{{ "%.2f"|format(h.stop) if h.stop else '-' }}</td>
+          <td>{% if h.dist_to_target_pct is not none %}{{ "%+.1f"|format(h.dist_to_target_pct) }}%{% else %}-{% endif %}</td>
+          <td class="{{ 'pos' if h.alert == 'TARGET HIT' else ('neg' if h.alert == 'STOP HIT' else ('warn' if h.alert == 'APPROACHING' else '')) }}">{{ h.alert or '-' }}</td>
+          <td class="note">{{ h.note }}</td>
+          <td>
+            <form method="post" action="/portfolio/remove/{{ h.id }}" style="display:inline">
+              <button class="btn small">x</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint">* = no live quote in the latest scan (price shows your buy price). "auto" target was pulled from the scanner's projection.</p>
+  {% endif %}
+</section>
+
+<section class="add">
+  <h2>Log a buy</h2>
+  <form method="post" action="/portfolio/add">
+    <div class="grid">
+      <label>Symbol<input name="symbol" placeholder="AAPL or 0005.HK" required></label>
+      <label>Market
+        <select name="market">
+          <option value="us">US</option>
+          <option value="hk">HK</option>
+        </select>
+      </label>
+      <label>Buy price<input name="buy_price" type="number" step="0.01" required></label>
+      <label>Qty<input name="qty" type="number" step="1" required></label>
+      <label>Buy date<input name="buy_date" type="date"></label>
+      <label>Target (optional)<input name="target" type="number" step="0.01" placeholder="auto from scan"></label>
+      <label>Stop (optional)<input name="stop" type="number" step="0.01" placeholder="auto from scan"></label>
+      <label>Note<input name="note" placeholder="why / plan"></label>
+    </div>
+    <button class="btn" type="submit">Add holding</button>
+    <p class="hint">Leave Target/Stop blank to auto-fill from the scanner's latest projection (falls back to +20% if the symbol isn't in the last scan).</p>
+  </form>
+</section>
+
+<footer>J Law M.E.T.S. framework · for education, not financial advice.</footer>
+</body>
+</html>

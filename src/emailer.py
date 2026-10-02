@@ -94,17 +94,23 @@ def _smtp_send(cfg: dict, msg, retries: int = 3, delay: int = 15) -> bool:
     return False
 
 
-def send(scan: dict, cfg: dict) -> bool:
+def send(scan: dict, cfg: dict, alerts: dict | None = None) -> bool:
     chart_top_n = int(cfg.get("chart_top_n", 5))
     images, cids = _build_images(scan, chart_top_n)
     html = rep.to_html(scan, chart_cids=cids)
     text = rep.to_text(scan)
+    # Phase 3: append the user's holdings price-alerts block (if any).
+    if alerts:
+        html += alerts.get("html", "")
+        text += alerts.get("text", "")
     cfg = dict(cfg)
     cfg["date"] = ""
     msg = build_message(cfg, html, text, images)
     ok = _smtp_send(cfg, msg)
     if ok:
-        logger.info("email sent to %s (%d charts)", cfg["recipients"], len(images))
+        n_alerts = len(alerts.get("html", "")) if alerts else 0
+        logger.info("email sent to %s (%d charts, alerts=%s)",
+                    cfg["recipients"], len(images), bool(alerts))
     return ok
 
 

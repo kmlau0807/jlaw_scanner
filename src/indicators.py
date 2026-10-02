@@ -67,42 +67,142 @@ def trend_structure(df: pd.DataFrame) -> dict:
     }
 
 
-def strong_trend_score(df: pd.DataFrame) -> float:
-    """0..1 — how 'strong' (not just 'up') the trend is. J Law checklist."""
-    c, o, v = df["close"], df["open"], df["volume"]
-    score, n = 0.0, 0
+# ---- EP1 強勁趨勢六大特徵 (Strong-Trend Six Features) ----
+# 對應 J Law EP1「強勁趨勢的特徵」：
+#   F1  上升趨勢結構 (HH/HL)         — 強勁趨勢的前提（必須為 True）
+#   F2  大陽/大陰燭 + 裂口           — 升跌幅顯著
+#   F3  上升大成交 / 下跌低量拉回     — 量價配合（強勢特徵）
+#   F4  燭身少重疊 + follow-through   — 延續性強、非震盪
+#   F5  10/20MA 支持、不碰 20 以上 MA — 強勢貼著快線、不回落慢線
+#   F6  時間效益高（短時間大升幅）    — 幾日就賺 20–30%
+# 全部閾值可由 config.ini [strong_trend] 覆寫。
+DEFAULT_STRONG_TREND_CFG = {
+    "win": 30,                # F2–F4 的燭身/量/延續窗口
+    "struct_win": 60,         # F1 的趨勢結構窗口
+    "body_thresh": 0.02,      # F2: 平均真實實體佔比門檻
+    "gap_thresh": 0.01,       # F2: 裂口門檻
+    "vol_ratio_thresh": 1.0,  # F3: 升日量 / 跌日量 比
+    "time_eff_win": 20,       # F6: 時間效益窗口
+    "time_eff_ret": 0.20,     # F6: 窗口內回報門檻 (20%)
+    "min_features": 5,        # 需要幾項特徵（含 F1）才算強勁
+    "score_thresh": 0.6,      # 綜合分門檻（備用）
+}
 
-    # big candles (large real body)
-    body = (c - o).abs() / c
-    big = body.tail(30).mean()
-    score += min(big / 0.02, 1.0); n += 1
 
-    # follow-through: up-day magnitude > down-day magnitude
+def strong_trend_features(df: pd.DataFrame, cfg: dict | None = None) -> dict:
+    """EP1 強勁趨勢六大特徵 —— 可解釋檢測器。
+
+    Returns a dict with 6 sub-scores (0..1; F1 is boolean), plus:
+      count       = 幾項特徵達標 (>=0.5，F1 需為 True)
+      score       = 綜合分 0..1（與舊 strong_trend_score 兼容）
+      is_strong   = F1 為 True 且 count >= min_features
+    """
+    cfg = {**DEFAULT_STRONG_TREND_CFG, **(cfg or {})}
+    # config.ini / 傳入 dict 的值可能是字串，強制轉型避免 float/str 運算錯誤
+    for _k in ("win", "struct_win", "time_eff_win", "min_features"):
+        cfg[_k] = int(cfg[_k])
+    for _k in ("body_thresh", "gap_thresh", "vol_ratio_thresh",
+               "time_eff_ret", "score_thresh"):
+        cfg[_k] = float(cfg[_k])
+    df = _add_mas(df)  # 確保 ma10/20/50/200 存在（被 analyze 呼叫時重算無害）
+    c, o, h, l, v = df["close"], df["open"], df["high"], df["low"], df["volume"]
+    price = float(c.iloc[-1])
+    win = int(cfg["win"])
+    out: dict = {}
+
+    # ---- F1 上升趨勢結構 (HH/HL) ----
+    ma50 = df["ma50"].iloc[-1]
+    ma200 = df["ma200"].iloc[-1]
+    above_ma = bool(price > ma50 and (pd.isna(ma200) or price > ma200))
+    roll_hi = c.shift(1).rolling(20).max().shift(1)
+    roll_lo = c.shift(1).rolling(20).min().shift(1)
+    new_hi = int((c > roll_hi).tail(int(cfg["struct_win"])).sum())
+    new_lo = int((c < roll_lo).tail(int(cfg["struct_win"])).sum())
+    f1 = bool(above_ma and new_hi >= new_lo)
+    out["f1_trend_structure"] = f1
+
+    # ---- F2 大陽/大陰燭 + 裂口 ----
+    body = (c - o).abs() / o
+    avg_body = float(body.tail(win).mean())
+    gap_up = (o / c.shift(1) - 1).clip(lower=0)
+    gap_dn = (c.shift(1) / o - 1).clip(lower=0)
+    avg_gap = float(max(gap_up.tail(win).mean(), gap_dn.tail(win).mean()))
+    f2_body = min(avg_body / cfg["body_thresh"], 1.0)
+    f2_gap = min(avg_gap / cfg["gap_thresh"], 1.0)
+    f2 = 0.6 * f2_body + 0.4 * f2_gap
+    out["f2_big_candles_gaps"] = round(f2, 3)
+
+    # ---- F3 上升大成交 / 下跌低量拉回 ----
     up = c > o
-    up_ret = ((c / o - 1)[up]).tail(30).mean()
-    dn_ret = ((o / c - 1)[~up]).tail(30).mean()
-    if pd.notna(up_ret) and pd.notna(dn_ret):
-        score += 1.0 if up_ret > dn_ret else 0.0; n += 1
+    vu = float(v[up].tail(win).mean())
+    vd = float(v[~up].tail(win).mean())
+    if vd > 0:
+        ratio = vu / vd
+        f3 = min(ratio / (2 * cfg["vol_ratio_thresh"]), 1.0)  # 升日量是跌日量 2 倍以上 → 1.0
+    else:
+        f3 = 0.0
+    out["f3_volume_signature"] = round(f3, 3)
 
-    # volume expansion on up-days (healthy uptrend)
-    vu = v[up].tail(30).mean()
-    vd = v[~up].tail(30).mean()
-    if pd.notna(vu) and pd.notna(vd) and vd > 0:
-        score += 1.0 if vu > vd else 0.0; n += 1
+    # ---- F4 燭身少重疊 + follow-through ----
+    # 4a follow-through: 連續兩日同向上漲（收盤>前收）的 bar 佔比
+    up_close = (c > c.shift(1)).astype(int).tail(win).values
+    ft = sum(1 for i in range(1, len(up_close)) if up_close[i] and up_close[i - 1])
+    f4_ft = min(ft / (win * 0.30), 1.0)
+    # 4b 燭身少重疊: 昨日實體區間與今日實體區間不重疊的佔比（gap 或跳空）
+    prev_body_hi = c.shift(1)
+    prev_body_lo = o.shift(1)
+    no_overlap = ((o >= prev_body_hi) | (c <= prev_body_lo)).tail(win - 1)
+    f4_ov = float(no_overlap.mean()) if len(no_overlap) else 0.0
+    f4 = 0.5 * f4_ft + 0.5 * f4_ov
+    out["f4_follow_through"] = round(f4, 3)
 
-    # MA proximity — hugging 10/20MA (less touching of slower MAs = stronger)
-    price = c.iloc[-1]
+    # ---- F5 10/20MA 支持，不碰 20 以上 MA ----
+    # EP1 原意：強勢股要麼「貼著 10/20MA 當支持」，要麼「強到連 10MA 都不碰、
+    # 遠離 20 以上慢線」。兩者都算強 —— 故以「價格在多條快/中 MA 之上 +
+    # 多頭排列(10>20>50) + 20MA 向上」為判據，而非要求貼近。
+    ma10 = df["ma10"].iloc[-1]
     ma20 = df["ma20"].iloc[-1]
-    if pd.notna(ma20) and ma20 > 0:
-        dist = abs(price - ma20) / ma20
-        score += max(0.0, 1.0 - dist / 0.08); n += 1
+    ma50v = df["ma50"].iloc[-1]
+    if pd.notna(ma10) and pd.notna(ma20) and pd.notna(ma50v) and ma20 > 0:
+        # 價格需站在 20MA/50MA 之上（允許健康回測 10MA；若跌破 20MA 視為較深回調）
+        above_fast = bool(price >= ma20 and price >= ma50v)
+        aligned = bool(ma10 >= ma20 >= ma50v)          # 多頭排列
+        ma20_s = df["ma20"]
+        if len(ma20_s) > 10:
+            slope = (ma20_s.iloc[-1] - ma20_s.iloc[-11]) / ma20_s.iloc[-11]
+        else:
+            slope = 0.0
+        rising = bool(slope > 0)
+        f5 = 1.0 if (above_fast and aligned and rising) else 0.0
+    else:
+        f5 = 0.0
+    out["f5_ma_hugging"] = round(f5, 3)
 
-    # time efficiency — big move in short time
-    base = c.iloc[-120] if len(c) > 120 else c.iloc[0]
-    ret = price / base - 1
-    score += min(max(ret / 0.4, 0.0), 1.0); n += 1
+    # ---- F6 時間效益高（短時間大升幅）----
+    base_idx = -int(cfg["time_eff_win"])
+    if len(c) > -base_idx:
+        base = float(c.iloc[base_idx])
+        ret = price / base - 1 if base else 0.0
+    else:
+        ret = price / float(c.iloc[0]) - 1 if c.iloc[0] else 0.0
+    f6 = min(max(ret / cfg["time_eff_ret"], 0.0), 1.0)
+    out["f6_time_efficiency"] = round(f6, 3)
 
-    return score / n if n else 0.0
+    # ---- aggregate ----
+    feats = [f1, f2, f3, f4, f5, f6]
+    count = sum(1 for x in feats if (x if isinstance(x, bool) else x >= 0.5))
+    score = (1.0 if f1 else 0.0) + f2 + f3 + f4 + f5 + f6
+    score = score / 6.0
+    min_f = int(cfg["min_features"])
+    out["count"] = count
+    out["score"] = round(score, 3)
+    out["is_strong"] = bool(f1 and count >= min_f)
+    return out
+
+
+def strong_trend_score(df: pd.DataFrame) -> float:
+    """Backward-compatible shim: aggregate 0..1 score (EP1 six-feature version)."""
+    return strong_trend_features(df)["score"]
 
 
 def relative_strength(df: pd.DataFrame, idx: pd.DataFrame | None, window: int = 60) -> float:
@@ -203,16 +303,70 @@ def _overbought_or_distribution(df: pd.DataFrame) -> dict:
     return {"overbought": ob, "distribution": dist, "rsi": float(rsi) if pd.notna(rsi) else None}
 
 
+def _macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9):
+    """Standard MACD (12/26/9 by default). Returns (macd_line, signal_line, histogram)."""
+    ema_fast = df["close"].ewm(span=fast, adjust=False).mean()
+    ema_slow = df["close"].ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    hist = macd_line - signal_line
+    return macd_line, signal_line, hist
+
+
+def macd_state(
+    df: pd.DataFrame,
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+    energy_window: int = 60,
+    small_energy_thresh: float = 0.30,
+) -> dict:
+    """MACD diagnostics implementing the two novel filters from the
+    'best MACD strategy' tutorial (see youtube_OLm9w1vbLmU/summary.md):
+
+      * Histogram-size filter — |hist| normalised by its trailing max. A *small*
+        histogram means weak momentum, so a fresh cross is a *reliable* reversal
+        signal; a *large* histogram means strong trend, so the cross is *unreliable*
+        (explains why death crosses fail inside a bull run).
+      * The EMA200 trend gate is applied by the caller (trend_structure already
+        tracks MA200), this function just reports the cross + energy so edges can
+        be gated on trend direction.
+
+    Returns: cross_up, cross_dn, energy (0..1), small_energy, above_zero.
+    """
+    macd_line, signal_line, hist = _macd(df, fast, slow, signal)
+    cross_up = bool(
+        (macd_line > signal_line).iloc[-1] and (macd_line <= signal_line).iloc[-2]
+    )
+    cross_dn = bool(
+        (macd_line < signal_line).iloc[-1] and (macd_line >= signal_line).iloc[-2]
+    )
+    hist_abs = hist.abs()
+    trailing_max = hist_abs.rolling(energy_window).max()
+    denom = trailing_max.iloc[-1]
+    energy = float(hist_abs.iloc[-1] / denom) if pd.notna(denom) and denom > 0 else 0.0
+    return {
+        "cross_up": cross_up,
+        "cross_dn": cross_dn,
+        "energy": energy,
+        "small_energy": bool(energy < small_energy_thresh),
+        "above_zero": bool(macd_line.iloc[-1] > 0),
+    }
+
+
 def analyze(
     symbol: str,
     df: pd.DataFrame,
     idx: pd.DataFrame | None = None,
     min_edges: int = 3,
+    macd_cfg: dict | None = None,
+    st_cfg: dict | None = None,
 ) -> dict:
     """Run the full J Law analysis on one symbol. Returns a structured result."""
     df = _add_mas(df)
     ts = trend_structure(df)
-    st = strong_trend_score(df)
+    stf = strong_trend_features(df, st_cfg)
+    st = stf["score"]
     rs = relative_strength(df, idx)
     flip = _recent_support_flip(df)
     ma_zone = _ma_support_zone(df)
@@ -222,13 +376,61 @@ def analyze(
     base = pat.detect_base_pattern(df)  # cup-with-handle / VCP edge
 
     price = float(df["close"].iloc[-1])
+
     edges = []        # bullish edges fired
     bear_edges = []   # bearish edges fired
 
+    # ---- MACD: 能量柱大小過濾 + EMA200 趨勢過濾 (YouTube MACD 策略) ----
+    # trend_ok_short defaults to the existing behaviour (not an uptrend); when the
+    # EMA200 filter is enabled it is tightened to require price below the 200MA so
+    # we never short "against the 200MA" (price still above it = stay long-only).
+    ma200 = df["ma200"].iloc[-1] if "ma200" in df.columns else None
+    ema200_downtrend = pd.notna(ma200) and price < ma200
+    ema200_filter = False
+    trend_ok_short = not ts["uptrend"]
+    macd = {"enabled": False}
+    if macd_cfg is not None and str(macd_cfg.get("enabled", "true")).lower() != "false":
+        fast = int(macd_cfg.get("fast", 12))
+        slow = int(macd_cfg.get("slow", 26))
+        sig = int(macd_cfg.get("signal", 9))
+        ewin = int(macd_cfg.get("energy_window", 60))
+        small_thr = float(macd_cfg.get("small_energy_thresh", 0.30))
+        ema200_filter = str(macd_cfg.get("ema200_filter", "true")).lower() != "false"
+        macd = macd_state(df, fast, slow, sig, ewin, small_thr)
+        macd["enabled"] = True
+        macd["ema200_filter"] = ema200_filter
+        if ema200_filter:
+            trend_ok_short = ema200_downtrend
+        # Bullish MACD edge: 金叉 + 弱動能(小能量柱) + 多頭趨勢 → 高勝率做多
+        if macd["cross_up"] and macd["small_energy"] and ts["uptrend"]:
+            edges.append(
+                f"MACD: 金叉 + 能量柱縮小(弱動能→反轉可信, energy={macd['energy']:.2f}) → 多頭確認"
+            )
+        # Bearish MACD edge: 死叉 + 弱動能(小能量柱) + 空頭趨勢(EMA200 下) → 高勝率做空
+        if macd["cross_dn"] and macd["small_energy"] and trend_ok_short:
+            bear_edges.append(
+                f"MACD: 死叉 + 能量柱縮小(弱動能→反轉可信, energy={macd['energy']:.2f}) → 空頭確認"
+            )
+
     if ts["uptrend"]:
         edges.append("Trend: HH/HL uptrend, above 50/200MA")
-    if st >= 0.6:
-        edges.append(f"Strong trend ({st:.2f}/1): big candles, vol-up on rallies, hugging 10/20MA")
+    if stf["is_strong"]:
+        _feat_labels = {
+            "f1_trend_structure": "HH/HL 上升結構",
+            "f2_big_candles_gaps": "大陽/大陰燭+裂口",
+            "f3_volume_signature": "升日大成交/跌日低量",
+            "f4_follow_through": "follow-through 延續",
+            "f5_ma_hugging": "貼 10/20MA",
+            "f6_time_efficiency": "短線高時間效益",
+        }
+        _fired = [
+            lbl
+            for key, lbl in _feat_labels.items()
+            if (stf[key] if isinstance(stf[key], bool) else stf[key] >= 0.5)
+        ]
+        edges.append(
+            f"強勁趨勢 ({stf['count']}/6 特徵, score={st:.2f}): " + "、".join(_fired)
+        )
     if rs > 0:
         edges.append(f"Relative strength +{rs:.1f}% vs index (leadership)")
     if flip["flip"]:
@@ -270,7 +472,7 @@ def analyze(
             f"Entry ~{entry:.2f} | Stop ~{stop:.2f} (just under support, ~2-3%) | Target ~{target:.2f} (R:R {rr}:1)",
             "M.E.T.A. = multiple edges stacked at one price → only take the trade here.",
         ]
-    elif len(bear_edges) >= 2 and not ts["uptrend"]:
+    elif len(bear_edges) >= 2 and trend_ok_short:
         signal = "SELL"
         explanation = bear_edges + [
             "Consider trimming / shorting / avoiding; never catch a falling knife without a M.E.T.A. re-entry.",
@@ -289,11 +491,21 @@ def analyze(
         "bear_edges": bear_edges,
         "rs": round(rs, 2),
         "strong_trend": round(st, 3),
+        "strong_trend_features": stf,
         "entry": entry,
         "stop": stop,
         "target": target,
         "rr": rr,
         "explanation": explanation,
         "base": base,
+        "macd": {
+            "enabled": macd["enabled"],
+            "cross_up": macd.get("cross_up"),
+            "cross_dn": macd.get("cross_dn"),
+            "energy": round(macd.get("energy", 0.0), 3),
+            "small_energy": macd.get("small_energy"),
+            "above_zero": macd.get("above_zero"),
+            "ema200_filter": ema200_filter,
+        },
         "last_date": str(df.index[-1].date()) if hasattr(df.index[-1], "date") else None,
     }

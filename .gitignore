@@ -26,6 +26,9 @@ Thumbs.db
 # === Runtime logs / scratch (generated, not source) ===
 daily_log.txt
 run_daily.log
+run_daily_*.log
+*_web*.log
+*.log
 _manual_run.txt
 _refresh_scan.txt
 *.bak

@@ -21,20 +21,19 @@ This is the ONLY module that talks to the network. Everything else
 from __future__ import annotations
 import os
 import re
+import json
 import time
 import glob
 import logging
 import threading
 import importlib
 import concurrent.futures
+import urllib.request
 import pandas as pd
 
 logger = logging.getLogger("jlaw.data")
 
 CACHE_DIR = "cache"
-
-# Flip to False to revert to yfinance-as-primary (TradingView only as backup).
-TV_PRIMARY = True
 
 # --- module-level singletons (one TV client reused across the whole scan) ---
 _TV_CLASSES = None   # (TvDatafeed, Interval) or False if unavailable
@@ -45,6 +44,34 @@ _TV_LOCK = threading.Lock()
 # (user, pass) = credentials resolved. Resolved once, lazily, from config.ini
 # [tradingview] or env vars TV_USERNAME/TV_PASSWORD. Never logged.
 _TV_CREDS = None
+
+# ---------------------------------------------------------------------------
+# Per-market data-source policy (resolved once from config.ini [data]).
+#   primary_hk / primary_us : "tv" (TradingView) or "yf" (yfinance)
+#   em_hk_backup            : use Eastmoney as a reliable HK fallback
+#                               (aastock.com is JS/ASP-loaded and not reliably
+#                                scrapeable, so Eastmoney is the robust HK
+#                                backup; same source stock-cah-app adopted).
+# ---------------------------------------------------------------------------
+DATA_CFG = {
+    "primary_hk": "yf",   # HK: yfinance first, TradingView as backup
+    "primary_us": "tv",   # US: TradingView first, yfinance as backup
+    "em_hk_backup": True,
+}
+
+
+def configure(data_cfg: dict | None = None):
+    """Apply the [data] config block to the module-level DATA_CFG."""
+    if not data_cfg:
+        return
+    for k in ("primary_hk", "primary_us", "em_hk_backup"):
+        if k in data_cfg:
+            v = data_cfg[k]
+            # normalise booleans coming from configparser (strings)
+            if k == "em_hk_backup":
+                v = str(v).strip().lower() in ("1", "true", "yes", "on")
+            DATA_CFG[k] = v
+    logger.info("data_provider configured: %s", DATA_CFG)
 
 
 def _cache_path(symbol: str, interval: str = "1d") -> str:
@@ -261,6 +288,73 @@ def _fetch_yfinance(symbol: str, period: str, interval: str, retries: int = 4):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Eastmoney HK layer (reliable HK backup; aastock is JS/ASP-loaded & fragile)
+# ---------------------------------------------------------------------------
+def _fetch_eastmoney(symbol: str, period: str, interval: str) -> pd.DataFrame | None:
+    """Fetch HK daily OHLCV from Eastmoney's kline API (secid 116.<code>).
+
+    Returns a cleaned DataFrame or None. Only valid for .HK symbols; indices
+    (^...) and US symbols are not served here.
+    """
+    s = symbol.strip().upper()
+    if not s.endswith(".HK"):
+        return None
+    code = s[:-3].lstrip("0") or "0"   # Eastmoney wants the bare numeric code
+    secid = f"116.{code}"
+    # klt=101 daily; fqt=1 qfq (adjusted); beg=0 end=20500101 => all history
+    url = (
+        "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        f"?secid={secid}&fields1=f1,f2,f3,f4,f5,f6"
+        "&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
+        "&klt=101&fqt=1&beg=0&end=20500101"
+    )
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://quote.eastmoney.com/",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        klines = (payload.get("data") or {}).get("klines") or []
+        if not klines:
+            logger.debug("Eastmoney no klines for %s", symbol)
+            return None
+        dates, opens, highs, lows, closes, vols = [], [], [], [], [], []
+        for row in klines:
+            p = row.split(",")
+            if len(p) < 6:
+                continue
+            dates.append(pd.to_datetime(p[0]))
+            opens.append(float(p[1]))
+            closes.append(float(p[2]))
+            highs.append(float(p[3]))
+            lows.append(float(p[4]))
+            vols.append(float(p[5]))
+        df = pd.DataFrame(
+            {
+                "open": opens,
+                "high": highs,
+                "low": lows,
+                "close": closes,
+                "volume": vols,
+            },
+            index=pd.DatetimeIndex(dates),
+        )
+        df = df.sort_index()
+        out = _normalize(df)
+        if len(out) > 20:
+            logger.info("Eastmoney ok %s (%d bars)", symbol, len(out))
+            return out
+        return None
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Eastmoney %s failed: %s", symbol, e)
+        return None
+
+
 def _load_local_export(symbol: str) -> pd.DataFrame | None:
     """Best-effort match against any *.csv export lying around the workspace."""
     base = symbol.replace(".HK", "").replace("^", "").lower()
@@ -301,12 +395,32 @@ def fetch(
             except Exception:  # noqa: BLE001
                 pass
 
-    # 2) TradingView primary (if enabled), then yfinance fallback, then CSV
+    # 2) per-market source policy (config.ini [data]);
+    #    HK: yfinance first, TradingView backup (TV is flaky for HK);
+    #    US: TradingView first, yfinance backup.
+    #    Eastmoney is a reliable HK-only fallback when both above fail.
+    is_hk = symbol.strip().upper().endswith(".HK")
+    primary = DATA_CFG["primary_hk"] if is_hk else DATA_CFG["primary_us"]
+
+    def _try_tv():
+        return _fetch_tradingview(symbol, period, interval)
+
+    def _try_yf():
+        return _fetch_yfinance(symbol, period, interval)
+
     df = None
-    if TV_PRIMARY:
-        df = _fetch_tradingview(symbol, period, interval)
+    if primary == "tv":
+        df = _try_tv()
+        if df is None or len(df) < 20:
+            df = _try_yf()
+    else:  # yf primary
+        df = _try_yf()
+        if df is None or len(df) < 20:
+            df = _try_tv()
     if df is None or len(df) < 20:
-        df = _fetch_yfinance(symbol, period, interval)
+        # Eastmoney: reliable HK backup (aastock.com is not scrapeable)
+        if is_hk and DATA_CFG.get("em_hk_backup"):
+            df = _fetch_eastmoney(symbol, period, interval)
     if df is None or len(df) < 20:
         df = _load_local_export(symbol)
 

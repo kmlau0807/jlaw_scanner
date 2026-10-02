@@ -34,6 +34,8 @@ def scan_market(
     rs_index: str | None = None,
     throttle: float = 0.15,
     progress_cb=None,
+    macd_cfg: dict | None = None,
+    st_cfg: dict | None = None,
 ) -> list[dict]:
     """Scan one market; return a list of analysis dicts (all symbols attempted)."""
     symbols = load_universe(market)
@@ -50,7 +52,8 @@ def scan_market(
             adv = (df["close"] * df["volume"]).tail(20).mean()
             if adv < min_avg_dollar_volume:
                 continue
-            res = ind.analyze(sym, df, idx=idx, min_edges=min_edges)
+            res = ind.analyze(sym, df, idx=idx, min_edges=min_edges,
+                              macd_cfg=macd_cfg, st_cfg=st_cfg)
             res["market"] = market
             results.append(res)
         except Exception as e:  # noqa: BLE001
@@ -85,6 +88,8 @@ def scan_all(
     rs_map: dict | None = None,
     throttle: float = 0.15,
     progress_cb=None,
+    macd_cfg: dict | None = None,
+    st_cfg: dict | None = None,
 ) -> dict:
     """Scan every requested market; return {market: {'buys':[...], 'sells':[...]}}."""
     rs_map = rs_map or {}
@@ -98,6 +103,8 @@ def scan_all(
             rs_index=rs_map.get(m),
             throttle=throttle,
             progress_cb=progress_cb,
+            macd_cfg=macd_cfg,
+            st_cfg=st_cfg,
         )
         b, s = rank(res, top_n)
         out[m] = {"buys": b, "sells": s, "scanned": len(res)}

@@ -1,0 +1,30 @@
+{
+  "holdings": [
+    {
+      "id": "62d7b7da9f1a",
+      "symbol": "0005.HK",
+      "market": "hk",
+      "buy_date": "2026-08-31",
+      "buy_price": 100.0,
+      "qty": 1000.0,
+      "target": 120.0,
+      "stop": null,
+      "note": "",
+      "auto_target": true,
+      "created_at": "2026-08-31T17:44:51"
+    },
+    {
+      "id": "4e69bd378047",
+      "symbol": "6160.HK",
+      "market": "hk",
+      "buy_date": "2026-10-02",
+      "buy_price": 217.8,
+      "qty": 1000.0,
+      "target": 270.5467,
+      "stop": 210.3511,
+      "note": "JLaw M.E.T.A. BUY (high metascore). Entry/stop/target from R:R 3:1 on scan; adjust buy_price to actual cost if different.",
+      "auto_target": false,
+      "created_at": "2026-10-02T15:57:18"
+    }
+  ]
+}

@@ -32,7 +32,19 @@
       <tr><td>Price</td><td>{{ rec.price }}</td></tr>
       <tr><td>Confluence score</td><td>{{ rec.score }} edges</td></tr>
       <tr><td>Relative strength</td><td class="{{ 'pos' if rec.rs >= 0 else 'neg' }}">{{ rec.rs }}+%</td></tr>
-      <tr><td>Strong-trend</td><td>{{ rec.strong_trend }}</td></tr>
+      <tr><td>Strong-trend (EP1)</td><td>{{ rec.strong_trend }}{% if rec.strong_trend_features is defined and rec.strong_trend_features %} ({{ rec.strong_trend_features.count }}/6{{ ' ✓' if rec.strong_trend_features.is_strong else '' }}){% endif %}</td></tr>
+    </table>
+    {% if rec.strong_trend_features is defined and rec.strong_trend_features %}
+    <table class="levels feat">
+      <tr><th>EP1 強勁趨勢六大特徵</th><th>命中</th></tr>
+      <tr><td>① 上升結構 HH/HL</td><td class="{{ 'pass' if rec.strong_trend_features.f1_trend_structure else 'fail' }}">{{ '✓' if rec.strong_trend_features.f1_trend_structure else '✗' }}</td></tr>
+      <tr><td>② 大陽/大陰燭 + 裂口</td><td>{{ rec.strong_trend_features.f2_big_candles_gaps }}</td></tr>
+      <tr><td>③ 升日大成交 / 跌日低量</td><td>{{ rec.strong_trend_features.f3_volume_signature }}</td></tr>
+      <tr><td>④ follow-through 延續</td><td>{{ rec.strong_trend_features.f4_follow_through }}</td></tr>
+      <tr><td>⑤ 貼 10/20MA（多頭排列）</td><td>{{ rec.strong_trend_features.f5_ma_hugging }}</td></tr>
+      <tr><td>⑥ 短線高時間效益</td><td>{{ rec.strong_trend_features.f6_time_efficiency }}</td></tr>
+    </table>
+    {% endif %}
       {% if rec.entry %}
       <tr><td>Entry</td><td>{{ rec.entry }}</td></tr>
       <tr><td>Stop</td><td>{{ rec.stop }}</td></tr>

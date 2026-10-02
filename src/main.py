@@ -26,6 +26,7 @@ from src import scanner as scn
 from src import reporter as rep
 from src import emailer
 from src import universe_builder as ub
+from src import data_provider as dp
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -43,6 +44,13 @@ def load_config() -> dict:
     cfg.update(dict(cp["scan"]))
     cfg.update(dict(cp["schedule"]))
     cfg.update(dict(cp["paths"]))
+    if cp.has_section("macd"):
+        cfg["macd"] = dict(cp["macd"])
+    if cp.has_section("strong_trend"):
+        cfg["strong_trend"] = dict(cp["strong_trend"])
+    if cp.has_section("data"):
+        cfg["data"] = dict(cp["data"])
+        dp.configure(cfg["data"])
     return cfg
 
 
@@ -63,6 +71,8 @@ def do_scan(cfg: dict, send_email: bool = False):
         lookback_days=int(cfg.get("lookback_days", 180)),
         min_avg_dollar_volume=float(cfg.get("min_avg_dollar_volume", 5_000_000)),
         rs_map=rs_map(cfg),
+        macd_cfg=cfg.get("macd"),
+        st_cfg=cfg.get("strong_trend"),
     )
     print(rep.to_text(scan))
     # persist for the web UI (Phase 2) to read without re-scanning.
@@ -88,7 +98,20 @@ def do_scan(cfg: dict, send_email: bool = False):
     except Exception as e:  # noqa: BLE001
         log.warning("could not persist scan_result.json: %s", e)
     if send_email:
-        ok = emailer.send(scan, cfg)
+        # Phase 3: surface any holdings that hit / are near their target.
+        alerts = None
+        try:
+            from src import bookkeeping as bk
+
+            al = bk.compute_alerts()
+            if al:
+                alerts = {
+                    "html": bk.build_alerts_html(al),
+                    "text": bk.build_alerts_text(al),
+                }
+        except Exception:  # noqa: BLE001
+            log.warning("could not build holdings alerts", exc_info=True)
+        ok = emailer.send(scan, cfg, alerts=alerts)
         print("EMAIL:", "sent" if ok else "FAILED (check config.ini credentials)")
     return scan
 

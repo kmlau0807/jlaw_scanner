@@ -23,6 +23,7 @@ sys.path.insert(0, ROOT)
 
 from src import scanner as scn  # noqa: E402
 from src import chart as chartmod  # noqa: E402
+from src import bookkeeping as bk  # noqa: E402
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 RESULT_FILE = os.path.join(ROOT, "scan_result.json")
@@ -130,6 +131,48 @@ def detail(market, symbol):
         tv_url=chartmod.tradingview_url(sym, market),
         chart_b64=chart_b64,
     )
+
+
+@app.route("/portfolio", methods=["GET"])
+def portfolio():
+    """Phase 3: personal holdings tracker + live P/L + price alerts."""
+    holdings = [bk.compute_status(h) for h in bk.load_holdings()]
+    alerts = bk.compute_alerts()
+    return render_template(
+        "portfolio.html",
+        holdings=holdings,
+        alerts=alerts,
+        tv=tradingview_symbol,
+    )
+
+
+@app.route("/portfolio/add", methods=["POST"])
+def portfolio_add():
+    sym = request.form.get("symbol", "").strip()
+    market = request.form.get("market", "us").strip().lower()
+    try:
+        buy_price = float(request.form.get("buy_price", ""))
+        qty = float(request.form.get("qty", ""))
+    except (TypeError, ValueError):
+        return redirect(url_for("portfolio"))
+    target = request.form.get("target") or None
+    stop = request.form.get("stop") or None
+    target = float(target) if target else None
+    stop = float(stop) if stop else None
+    bk.add_holding(
+        sym, market, buy_price, qty,
+        buy_date=request.form.get("buy_date") or None,
+        target=target,
+        stop=stop,
+        note=request.form.get("note", ""),
+    )
+    return redirect(url_for("portfolio"))
+
+
+@app.route("/portfolio/remove/<hid>", methods=["POST"])
+def portfolio_remove(hid):
+    bk.remove_holding(hid)
+    return redirect(url_for("portfolio"))
 
 
 if __name__ == "__main__":
