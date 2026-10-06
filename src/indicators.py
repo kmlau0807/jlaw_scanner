@@ -354,6 +354,46 @@ def macd_state(
     }
 
 
+# ---- stop / risk configuration ----
+# The stop is the ONLY real risk control in the engine: R:R is derived from it
+# (target = entry + 3 * risk), so a wide stop silently turns "3:1" into a
+# trade that needs a 20%+ move. These knobs bound that.
+#   max_risk_pct   - a signal whose nearest valid support is further below price
+#                    than this is downgraded to WATCH instead of BUY.
+#   fallback_pct   - distance of the synthetic stop used when NO support edge fired.
+#   stop_buffer    - place the stop just *under* the support level (0.985 = 1.5% under).
+DEFAULT_RISK_CFG = {
+    "max_risk_pct": 0.08,
+    "fallback_pct": 0.03,
+    "stop_buffer": 0.985,
+}
+
+
+def _pick_stop(price: float, flip: dict, ma_zone: dict, tl: dict,
+               fallback_pct: float) -> tuple[str, float]:
+    """Choose the stop level: the NEAREST support that an edge actually confirmed.
+
+    Rules (both matter):
+      * only detectors that FIRED contribute a level — an unfired `level` is just
+        a number computed on the way to a False verdict, and a level ABOVE price is
+        resistance, not support.
+      * of the surviving levels take the HIGHEST one below price (nearest support),
+        which yields the tightest stop. Taking the minimum instead — the old
+        behaviour — always produced the widest possible stop and let non-fired
+        detectors drag it far below the structure.
+    """
+    cands: list[tuple[str, float]] = []
+    if flip.get("flip") and flip.get("level") and flip["level"] < price:
+        cands.append(("S/R flip", float(flip["level"])))
+    if ma_zone.get("zone") and ma_zone.get("support") and ma_zone["support"] < price:
+        cands.append(("MA support", float(ma_zone["support"])))
+    if tl.get("bounce") and tl.get("utl") and tl["utl"] < price:
+        cands.append(("up-trend line", float(tl["utl"])))
+    if not cands:
+        return "fallback", price * (1.0 - fallback_pct)
+    return max(cands, key=lambda kv: kv[1])
+
+
 def analyze(
     symbol: str,
     df: pd.DataFrame,
@@ -361,6 +401,7 @@ def analyze(
     min_edges: int = 3,
     macd_cfg: dict | None = None,
     st_cfg: dict | None = None,
+    risk_cfg: dict | None = None,
 ) -> dict:
     """Run the full J Law analysis on one symbol. Returns a structured result."""
     df = _add_mas(df)
@@ -455,23 +496,40 @@ def analyze(
     score = len(edges)
     signal = "HOLD"
     entry = stop = target = rr = None
+    risk_pct = None
+    stop_label = None
     explanation = []
 
     if score >= min_edges and ts["uptrend"]:
-        signal = "BUY"
-        support = min(
-            [x for x in (flip["level"], ma_zone["support"], tl["utl"]) if x]
-            + [price * 0.97]
-        )
+        rc = {**DEFAULT_RISK_CFG, **(risk_cfg or {})}
+        max_risk = float(rc["max_risk_pct"])
+        label, support = _pick_stop(price, flip, ma_zone, tl, float(rc["fallback_pct"]))
+
         entry = round(price, 4)
-        stop = round(support * 0.985, 4)
+        stop = round(support * float(rc["stop_buffer"]), 4)
         risk = entry - stop
+        risk_pct = (risk / entry) if entry else 0.0
         target = round(entry + 3 * risk, 4)  # R:R 3:1 (J Law baseline)
         rr = round((target - entry) / risk, 2) if risk > 0 else None
-        explanation = edges + [
-            f"Entry ~{entry:.2f} | Stop ~{stop:.2f} (just under support, ~2-3%) | Target ~{target:.2f} (R:R {rr}:1)",
-            "M.E.T.A. = multiple edges stacked at one price → only take the trade here.",
-        ]
+
+        stop_label = label
+        if risk > 0 and risk_pct <= max_risk:
+            signal = "BUY"
+            explanation = edges + [
+                f"Entry ~{entry:.2f} | Stop ~{stop:.2f} ({risk_pct * 100:.1f}% risk, "
+                f"just under {label}) | Target ~{target:.2f} (R:R {rr}:1)",
+                "M.E.T.A. = multiple edges stacked at one price → only take the trade here.",
+            ]
+        else:
+            # Confluence is there, but the structure is too loose to risk-manage:
+            # the nearest real support is further away than we are willing to risk,
+            # so there is no tight entry. Watch, don't trade.
+            signal = "WATCH"
+            explanation = edges + [
+                f"No tight entry: nearest support ({label}) is {risk_pct * 100:.1f}% below "
+                f"price, over the {max_risk * 100:.0f}% risk cap → stop would be too wide.",
+                "Watchlist only — wait for price to tighten up near support before entering.",
+            ]
     elif len(bear_edges) >= 2 and trend_ok_short:
         signal = "SELL"
         explanation = bear_edges + [
@@ -496,6 +554,8 @@ def analyze(
         "stop": stop,
         "target": target,
         "rr": rr,
+        "risk_pct": round(risk_pct * 100, 2) if risk_pct is not None else None,
+        "stop_source": stop_label,
         "explanation": explanation,
         "base": base,
         "macd": {

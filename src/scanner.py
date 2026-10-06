@@ -36,6 +36,7 @@ def scan_market(
     progress_cb=None,
     macd_cfg: dict | None = None,
     st_cfg: dict | None = None,
+    risk_cfg: dict | None = None,
 ) -> list[dict]:
     """Scan one market; return a list of analysis dicts (all symbols attempted)."""
     symbols = load_universe(market)
@@ -53,7 +54,8 @@ def scan_market(
             if adv < min_avg_dollar_volume:
                 continue
             res = ind.analyze(sym, df, idx=idx, min_edges=min_edges,
-                              macd_cfg=macd_cfg, st_cfg=st_cfg)
+                              macd_cfg=macd_cfg, st_cfg=st_cfg,
+                              risk_cfg=risk_cfg)
             res["market"] = market
             results.append(res)
         except Exception as e:  # noqa: BLE001
@@ -66,9 +68,14 @@ def scan_market(
 
 
 def rank(results: list[dict], top_n: int = 10):
-    """Split into (buys, sells) and rank by confluence score."""
+    """Split into (buys, sells, watches) and rank by confluence score.
+
+    WATCH = the M.E.T.A. confluence fired but the nearest confirmed support is
+    too far below price to give a tight stop, so it is deliberately NOT a BUY.
+    """
     buys = [r for r in results if r["signal"] == "BUY"]
     sells = [r for r in results if r["signal"] == "SELL"]
+    watches = [r for r in results if r["signal"] == "WATCH"]
     # rank buys: more edges, stronger trend, better RS
     buys.sort(
         key=lambda r: (r["score"], r["strong_trend"], r["rs"]), reverse=True
@@ -76,7 +83,10 @@ def rank(results: list[dict], top_n: int = 10):
     sells.sort(
         key=lambda r: (len(r["bear_edges"]), -r["rs"]), reverse=True
     )
-    return buys[:top_n], sells[:top_n]
+    watches.sort(
+        key=lambda r: (r["score"], r["strong_trend"], r["rs"]), reverse=True
+    )
+    return buys[:top_n], sells[:top_n], watches[:top_n]
 
 
 def scan_all(
@@ -90,6 +100,7 @@ def scan_all(
     progress_cb=None,
     macd_cfg: dict | None = None,
     st_cfg: dict | None = None,
+    risk_cfg: dict | None = None,
 ) -> dict:
     """Scan every requested market; return {market: {'buys':[...], 'sells':[...]}}."""
     rs_map = rs_map or {}
@@ -105,7 +116,8 @@ def scan_all(
             progress_cb=progress_cb,
             macd_cfg=macd_cfg,
             st_cfg=st_cfg,
+            risk_cfg=risk_cfg,
         )
-        b, s = rank(res, top_n)
-        out[m] = {"buys": b, "sells": s, "scanned": len(res)}
+        b, s, w = rank(res, top_n)
+        out[m] = {"buys": b, "sells": s, "watches": w, "scanned": len(res)}
     return out

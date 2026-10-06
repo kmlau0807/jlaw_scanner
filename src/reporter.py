@@ -26,6 +26,10 @@ def to_text(scan: dict) -> str:
         lines.append("-- SELL candidates --")
         for r in data["sells"]:
             lines.append(_row(r))
+        if data.get("watches"):
+            lines.append("-- WATCH (confluence, but no tight entry) --")
+            for r in data["watches"]:
+                lines.append(_row(r))
     return "\n".join(lines)
 
 
@@ -46,6 +50,13 @@ def to_markdown(scan: dict) -> str:
         md.append("|---|---|---|---|")
         for r in data["sells"]:
             md.append(f"| {r['symbol']} | {len(r['bear_edges'])} | {r['price']} | {r['rs']:+.1f} |")
+        if data.get("watches"):
+            md.append("\n### 🟡 WATCH (confluence, but stop too wide)\n")
+            md.append("| Symbol | Score | Price | Risk% | Stop source |")
+            md.append("|---|---|---|---|---|")
+            for r in data["watches"]:
+                md.append(f"| {r['symbol']} | {r['score']} | {r['price']} | "
+                          f"{r.get('risk_pct')} | {r.get('stop_source')} |")
         md.append("")
     return "\n".join(md)
 

@@ -48,6 +48,8 @@ def load_config() -> dict:
         cfg["macd"] = dict(cp["macd"])
     if cp.has_section("strong_trend"):
         cfg["strong_trend"] = dict(cp["strong_trend"])
+    if cp.has_section("risk"):
+        cfg["risk"] = dict(cp["risk"])
     if cp.has_section("data"):
         cfg["data"] = dict(cp["data"])
         dp.configure(cfg["data"])
@@ -73,6 +75,7 @@ def do_scan(cfg: dict, send_email: bool = False):
         rs_map=rs_map(cfg),
         macd_cfg=cfg.get("macd"),
         st_cfg=cfg.get("strong_trend"),
+        risk_cfg=cfg.get("risk"),
     )
     print(rep.to_text(scan))
     # persist for the web UI (Phase 2) to read without re-scanning.
