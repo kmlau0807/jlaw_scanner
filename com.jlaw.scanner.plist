@@ -2,14 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Replace USERNAME and the path below with your Mac's actual values -->
     <key>Label</key>
     <string>com.jlaw.scanner</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/USERNAME/DEV/jlaw_scanner/run_daily.sh</string>
+        <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner/run_daily.sh</string>
     </array>
 
     <!-- Run daily at 07:00 local time (HK market opens 09:30; scan before open) -->
@@ -22,12 +21,12 @@
     </dict>
 
     <key>WorkingDirectory</key>
-    <string>/Users/USERNAME/DEV/jlaw_scanner</string>
+    <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner</string>
 
     <key>StandardOutPath</key>
-    <string>/Users/USERNAME/DEV/jlaw_scanner/launchd.out.log</string>
+    <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/USERNAME/DEV/jlaw_scanner/launchd.err.log</string>
+    <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner/launchd.err.log</string>
 
     <!-- Do NOT run immediately on load; only at the scheduled time -->
     <key>RunAtLoad</key>

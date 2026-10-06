@@ -11,9 +11,12 @@ import io
 import time
 import datetime
 import contextlib
+import logging
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+log = logging.getLogger("jlaw.sched")
 
 from src.main import load_config, do_scan
 from src import universe_builder as ub
