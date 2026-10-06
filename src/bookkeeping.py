@@ -11,6 +11,13 @@ Live price + P/L are read from the latest scan_result.json (same source the
 email and web dashboard use), so everything stays consistent without a
 separate data fetch.
 
+IMPORTANT: scan_result.json only contains that day's BUY/SELL picks, so a
+holding that is not currently a pick has NO row there. get_current_price()
+therefore falls back to a direct quote from the data provider (disk-cached,
+so it is cheap). Without that fallback the price silently collapsed to the
+buy price, freezing P/L at 0% and meaning alerts never fired for most
+holdings.
+
 CLI (handy for quick adds / testing):
     python -m src.bookkeeping add AAPL us 180.5 100
     python -m src.bookkeeping add 2359.HK hk 197.1 500 --target 223.4 --stop 188.3
@@ -20,9 +27,14 @@ CLI (handy for quick adds / testing):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, date
+
+from src import data_provider as dp
+
+log = logging.getLogger("jlaw.book")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORTFOLIO_FILE = os.path.join(ROOT, "portfolio.json")
@@ -116,14 +128,65 @@ def get_scan_target(symbol: str, market: str):
     return t, s
 
 
-def get_current_price(symbol: str, market: str):
-    row = _find_scan_row(symbol, market)
-    if not row:
-        return None
+# Per-process memo for provider quotes, so `list` over a large portfolio only
+# fetches each symbol once. dp.fetch() itself is disk-cached (20h) on top.
+_QUOTE_CACHE: dict[tuple[str, str], float | None] = {}
+_dp_configured = False
+
+
+def _configure_provider() -> None:
+    """Apply config.ini [data] to data_provider.
+
+    main.load_config() normally does this, but the CLI entry point
+    (`python -m src.bookkeeping ...`) never goes through it, so the per-market
+    source policy would otherwise sit at module defaults.
+    """
+    global _dp_configured
+    if _dp_configured:
+        return
+    _dp_configured = True
     try:
-        return float(row.get("price"))
-    except (TypeError, ValueError):
-        return None
+        import configparser
+
+        cp = configparser.ConfigParser()
+        cp.read(os.path.join(ROOT, "config.ini"))
+        if cp.has_section("data"):
+            dp.configure(dict(cp["data"]))
+    except Exception:  # noqa: BLE001
+        log.debug("could not apply [data] config", exc_info=True)
+
+
+def fetch_last_close(symbol: str, market: str):
+    """Last close straight from the data provider, or None if it fails."""
+    key = (_norm_symbol(symbol, market), market)
+    if key in _QUOTE_CACHE:
+        return _QUOTE_CACHE[key]
+    price = None
+    try:
+        _configure_provider()
+        df = dp.fetch(key[0], period="1mo", interval="1d",
+                      use_cache=True, max_age_hours=20.0)
+        if df is not None and len(df):
+            price = float(df["close"].iloc[-1])
+    except Exception:  # noqa: BLE001
+        log.warning("live quote failed for %s", key[0], exc_info=True)
+    _QUOTE_CACHE[key] = price
+    return price
+
+
+def get_current_price(symbol: str, market: str):
+    """Prefer the scan's own price; fall back to a real quote.
+
+    The fallback matters: scan_result.json only holds the current BUY/SELL
+    picks, so without it every other holding reported its own buy price.
+    """
+    row = _find_scan_row(symbol, market)
+    if row:
+        try:
+            return float(row.get("price"))
+        except (TypeError, ValueError):
+            pass
+    return fetch_last_close(symbol, market)
 
 
 # --------------------------------------------------------------------------
