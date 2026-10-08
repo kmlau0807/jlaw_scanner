@@ -24,6 +24,7 @@ sys.path.insert(0, ROOT)
 from src import scanner as scn  # noqa: E402
 from src import chart as chartmod  # noqa: E402
 from src import bookkeeping as bk  # noqa: E402
+from src import data_provider as dp  # noqa: E402
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 RESULT_FILE = os.path.join(ROOT, "scan_result.json")
@@ -35,12 +36,21 @@ _lock = threading.Lock()
 
 
 def load_config() -> dict:
+    """Read config.ini. Must cover the same sections the CLI uses, otherwise a
+    scan started from the web silently drops edges (e.g. MACD is disabled when
+    macd_cfg is None) and the dashboard disagrees with the daily email."""
     cp = configparser.ConfigParser()
     cp.read(CONFIG_FILE)
     cfg = {}
     for sec in ("scan", "schedule", "paths"):
         if cp.has_section(sec):
             cfg.update(dict(cp[sec]))
+    # nested blocks, passed through to the engine
+    for sec in ("macd", "strong_trend", "risk", "data"):
+        if cp.has_section(sec):
+            cfg[sec] = dict(cp[sec])
+    if "data" in cfg:
+        dp.configure(cfg["data"])
     return cfg
 
 
@@ -63,6 +73,9 @@ def _run_scan():
         lookback_days=int(cfg.get("lookback_days", 180)),
         min_avg_dollar_volume=float(cfg.get("min_avg_dollar_volume", 5_000_000)),
         rs_map=rs_map,
+        macd_cfg=cfg.get("macd"),
+        st_cfg=cfg.get("strong_trend"),
+        risk_cfg=cfg.get("risk"),
     )
     with _lock:
         _result = scan
