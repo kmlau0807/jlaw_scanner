@@ -5,14 +5,29 @@ Pure-pandas implementation of J Law's M.E.T.S. / M.E.T.A. framework
 (see JLaw_四集交易技巧總結.md for the source material).
 
 Edges implemented (each is an *independent* signal from a different
-group of market participants, so they stack into a M.E.T.A. node):
+group of market participants, so they stack into a M.E.T.A. node).
+This is the *unified* engine: jlaw's original edges plus meta-screener's
+richer, multi-timeframe set (ported in src/meta_edges.py) — see
+`merge_meta_edges` design note. jlaw's risk layer (nearest-support stop,
+risk cap -> WATCH, R:R 3:1, BUY/SELL) is preserved.
 
-  Edge 1  Momentum & Trend   - HH/HL structure + strong-trend checklist
-  Edge 2a Relative Strength  - stock vs benchmark index (跌市照妖鏡)
-  Edge 2b S/R flip           - broken resistance that now acts as support
-  Edge 2c MA cluster support - price hugging 10/20MA in an uptrend (zone)
-  Edge 2d Channel / TL bounce- price sitting on an up-trend line (UTL)
-  Edge 2e Low-volume pullback- healthy shakeout into the M.E.T.A. zone
+  jlaw originals
+    - Trend structure      - HH/HL uptrend, above 50/200MA (mandatory gate)
+    - Strong trend (F1-F6)  - EP1 six-feature checklist
+    - Relative strength     - 60d ratio vs benchmark (leadership)
+    - S/R flip              - broken resistance now acting as support
+    - MA cluster support    - price hugging 10/20MA in an uptrend
+    - Up-trend line bounce  - price sitting on a UTL
+    - Low-volume pullback   - healthy shakeout (now meta's richer version)
+    - Base pattern          - cup-with-handle / VCP (patterns.py)
+  meta_edges (multi-timeframe, ported)
+    - S/R zones + near-support - clustered zones, ATR-based stop (feeds _pick_stop)
+    - Weekly HTF alignment  - higher-timeframe dominance filter
+    - Volume breakout       - volume-confirmed zone breakout
+    - Retest of flipped zone- old resistance -> new support
+    - 照妖鏡 RS leadership   - 3 windows + "market down, stock up"
+    - RSI/MACD divergence   - bullish momentum deceleration (底背離)
+    - Volume fuel           - up-day vol vs down-day vol
 
 A BUY fires when >= `min_edges` of these line up at (roughly) one price.
 A SELL fires on the bearish mirror: breakdown / distribution / extended.
@@ -22,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 from . import patterns as pat
+from . import meta_edges as me
 
 MA_FAST = 10
 MA_MID = 20
@@ -275,17 +291,6 @@ def _channel_or_tl(df: pd.DataFrame) -> dict:
     return {"bounce": bounce, "utl": float(utl_last)}
 
 
-def _low_volume_pullback(df: pd.DataFrame) -> bool:
-    v = df["volume"]
-    c = df["close"]
-    # last 5 bars down/flat on below-average volume = healthy shakeout
-    recent = df.tail(5)
-    down = (recent["close"] <= recent["close"].shift(1)).sum() >= 3
-    avg_vol = v.tail(40).mean()
-    low_vol = v.tail(5).mean() < avg_vol * 0.85
-    return bool(down and low_vol)
-
-
 def _overbought_or_distribution(df: pd.DataFrame) -> dict:
     c = df["close"]
     price = c.iloc[-1]
@@ -370,7 +375,7 @@ DEFAULT_RISK_CFG = {
 
 
 def _pick_stop(price: float, flip: dict, ma_zone: dict, tl: dict,
-               fallback_pct: float) -> tuple[str, float]:
+               fallback_pct: float, zone: dict | None = None) -> tuple[str, float]:
     """Choose the stop level: the NEAREST support that an edge actually confirmed.
 
     Rules (both matter):
@@ -389,6 +394,10 @@ def _pick_stop(price: float, flip: dict, ma_zone: dict, tl: dict,
         cands.append(("MA support", float(ma_zone["support"])))
     if tl.get("bounce") and tl.get("utl") and tl["utl"] < price:
         cands.append(("up-trend line", float(tl["utl"])))
+    # meta_edges: S/R zone + ATR-based stop (tightest, structure-aware)
+    if zone and zone.get("active") and zone.get("suggested_stop") \
+            and zone["suggested_stop"] < price:
+        cands.append(("S/R zone", float(zone["suggested_stop"])))
     if not cands:
         return "fallback", price * (1.0 - fallback_pct)
     return max(cands, key=lambda kv: kv[1])
@@ -405,6 +414,7 @@ def analyze(
 ) -> dict:
     """Run the full J Law analysis on one symbol. Returns a structured result."""
     df = _add_mas(df)
+    zones = me.build_zones(df)  # S/R zones (clustered, from meta_edges)
     ts = trend_structure(df)
     stf = strong_trend_features(df, st_cfg)
     st = stf["score"]
@@ -412,9 +422,17 @@ def analyze(
     flip = _recent_support_flip(df)
     ma_zone = _ma_support_zone(df)
     tl = _channel_or_tl(df)
-    lvp = _low_volume_pullback(df)
     weak = _overbought_or_distribution(df)
     base = pat.detect_base_pattern(df)  # cup-with-handle / VCP edge
+
+    # ---- meta_edges: richer, multi-timeframe edge set (ported from meta-screener) ----
+    vol_fuel = me.edge_volume_fuel(df)
+    lvp_meta = me.edge_low_vol_pullback(df)   # richer low-vol pullback
+    near = me.edge_near_support(df, zones)    # S/R zone + ATR stop
+    htf = me.edge_weekly_htf(df)              # weekly HTF alignment
+    br = me.edge_breakout_retest(df, zones)   # volume breakout + retest
+    rs_lead = me.edge_rs_leadership(df, idx)  # 照妖鏡 RS (3 windows)
+    div = me.edge_divergence(df)              # RSI/MACD bullish divergence
 
     price = float(df["close"].iloc[-1])
 
@@ -480,8 +498,35 @@ def analyze(
         edges.append(f"MA cluster support ~{ma_zone['support']:.2f}")
     if tl["bounce"]:
         edges.append(f"On up-trend line (UTL) ~{tl['utl']:.2f}")
-    if lvp:
-        edges.append("Low-volume pullback (healthy shakeout)")
+    # ---- meta_edges: richer, multi-timeframe edges ----
+    if vol_fuel["active"]:
+        edges.append(
+            f"Volume fuel: up-day vol {vol_fuel['up_down_vol_ratio']}x down-day vol"
+        )
+    if lvp_meta["active"]:
+        edges.append("Low-volume pullback (healthy shakeout, <62% leg retrace)")
+    if near["active"]:
+        edges.append(
+            f"Near S/R zone support ~{near['zone_high']:.2f} "
+            f"(ATR stop risk {near['risk_pct'] * 100:.1f}%)"
+        )
+    if htf["active"]:
+        edges.append("Weekly HTF aligned (higher-timeframe uptrend)")
+    if br["breakout"]["active"]:
+        edges.append(
+            f"Volume breakout above zone {br['breakout']['zone_high']:.2f} "
+            f"(x{br['breakout']['vol_mult']} vol)"
+        )
+    if br["retest"]["active"]:
+        edges.append(
+            f"Retest of flipped zone {br['retest']['zone_high']:.2f} holding as support"
+        )
+    if rs_lead.get("active"):
+        tag = ("照妖鏡: 大盤跌佢升" if rs_lead.get("down_market_up_stock")
+               else f"RS leadership ({rs_lead.get('beats')}/3 windows)")
+        edges.append(tag)
+    if div["active"]:
+        edges.append(f"Momentum divergence (底背離): {div['detail']}")
     # Base-pattern edge: only counts when actionable (at the pivot or breaking out)
     if base.get("found") and (base.get("at_pivot") or base.get("breakout")):
         edges.append(base["text"])
@@ -503,7 +548,9 @@ def analyze(
     if score >= min_edges and ts["uptrend"]:
         rc = {**DEFAULT_RISK_CFG, **(risk_cfg or {})}
         max_risk = float(rc["max_risk_pct"])
-        label, support = _pick_stop(price, flip, ma_zone, tl, float(rc["fallback_pct"]))
+        label, support = _pick_stop(
+            price, flip, ma_zone, tl, float(rc["fallback_pct"]), near
+        )
 
         entry = round(price, 4)
         stop = round(support * float(rc["stop_buffer"]), 4)
@@ -558,6 +605,17 @@ def analyze(
         "stop_source": stop_label,
         "explanation": explanation,
         "base": base,
+        "meta_edges": {
+            "volume_fuel": vol_fuel,
+            "low_vol_pullback": lvp_meta,
+            "near_support": near,
+            "weekly_htf": htf,
+            "breakout_retest": br,
+            "rs_leadership": rs_lead,
+            "divergence": div,
+            "zones": [{"low": z["low"], "high": z["high"], "touches": z["touches"]}
+                      for z in zones],
+        },
         "macd": {
             "enabled": macd["enabled"],
             "cross_up": macd.get("cross_up"),
