@@ -54,6 +54,9 @@
       <tr><td>As of</td><td>{{ rec.last_date }}</td></tr>
     </table>
     <p class="hint">M.E.T.A. = multiple independent edges stacked at one price. Enter only there; size so a 2–3% stop keeps R:R ≥ 3:1. Not financial advice.</p>
+    <p>
+      <a class="btn" href="/portfolio?symbol={{ rec.symbol }}&market={{ market }}&price={{ rec.price or '' }}&target={{ rec.target or '' }}&stop={{ rec.stop or '' }}&score={{ rec.score or '' }}#log-buy">Log this buy → My Holdings</a>
+    </p>
   </section>
 
   <section class="panel chart">

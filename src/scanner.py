@@ -17,6 +17,14 @@ from . import indicators as ind
 logger = logging.getLogger("jlaw.scanner")
 
 
+def _norm(symbol: str, market: str) -> str:
+    """Match the shape bookkeeping stores: HK codes carry a .HK suffix."""
+    symbol = str(symbol).strip().upper()
+    if market == "hk" and not symbol.endswith(".HK"):
+        symbol += ".HK"
+    return symbol
+
+
 def load_universe(market: str, universe_dir: str = "universe") -> list[str]:
     path = os.path.join(universe_dir, f"{market}.csv")
     if not os.path.exists(path):
@@ -37,13 +45,34 @@ def scan_market(
     macd_cfg: dict | None = None,
     st_cfg: dict | None = None,
     risk_cfg: dict | None = None,
+    exclude_holdings: bool = False,
 ) -> list[dict]:
-    """Scan one market; return a list of analysis dicts (all symbols attempted)."""
+    """Scan one market; return a list of analysis dicts (all symbols attempted).
+
+    `exclude_holdings` skips anything already in portfolio.json: you own it, so
+    a fresh BUY is noise and re-analysing it is a wasted API call. Owned names
+    are still tracked -- bookkeeping.compute_status() fetches a real quote for
+    them independently of this scan.
+    """
     symbols = load_universe(market)
     idx = dp.fetch_index(rs_index) if rs_index else None
+    held: set[str] = set()
+    if exclude_holdings:
+        try:
+            # local import: bookkeeping -> data_provider, no cycle back to scanner
+            from . import bookkeeping as bk
+
+            held = bk.held_symbols(market)
+            if held:
+                logger.info("excluding %d holding(s) from the %s scan: %s",
+                            len(held), market, ", ".join(sorted(held)))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("could not load holdings for exclusion: %s", e)
     results = []
     total = len(symbols)
     for i, sym in enumerate(symbols, 1):
+        if held and _norm(sym, market) in held:
+            continue
         try:
             df = dp.fetch(sym, period=f"{lookback_days}d", interval="1d")
             if df is None or len(df) < 30:
@@ -101,6 +130,7 @@ def scan_all(
     macd_cfg: dict | None = None,
     st_cfg: dict | None = None,
     risk_cfg: dict | None = None,
+    exclude_holdings: bool = False,
 ) -> dict:
     """Scan every requested market; return {market: {'buys':[...], 'sells':[...]}}."""
     rs_map = rs_map or {}
@@ -117,6 +147,7 @@ def scan_all(
             macd_cfg=macd_cfg,
             st_cfg=st_cfg,
             risk_cfg=risk_cfg,
+            exclude_holdings=exclude_holdings,
         )
         b, s, w = rank(res, top_n)
         out[m] = {"buys": b, "sells": s, "watches": w, "scanned": len(res)}

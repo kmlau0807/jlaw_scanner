@@ -71,3 +71,9 @@ footer{padding:16px 20px;color:var(--muted);font-size:11px;border-top:1px solid 
 .add input,.add select{background:var(--bg);color:var(--text);border:1px solid var(--line);
   border-radius:8px;padding:8px 10px;font-size:13px}
 .add button.btn{margin-top:12px}
+/* a.btn is used inline in the scan tables ("+ holding" jump to the log form) */
+a.btn{text-decoration:none;display:inline-block;white-space:nowrap}
+a.btn.small:hover{background:var(--blue);color:#fff}
+.prefill{margin:0 0 12px;padding:9px 14px;font-size:13px;border-radius:10px;
+  background:rgba(52,152,219,.12);border:1px solid var(--blue);color:var(--text)}
+.prefill b{color:var(--blue)}

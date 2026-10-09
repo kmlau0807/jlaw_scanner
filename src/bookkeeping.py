@@ -334,6 +334,32 @@ def compute_alerts() -> list[dict]:
     return out
 
 
+def held_symbols(market: str) -> set[str]:
+    """Normalised symbols of everything already owned, for one market.
+
+    The daily scanner uses this to SKIP holdings: you already have a position,
+    so a fresh BUY on the same name is noise, and re-analysing it wastes an
+    API call. They are still monitored -- via compute_status()/compute_alerts(),
+    which fetch a real quote directly rather than reading scan_result.json.
+    """
+    out: set[str] = set()
+    for h in load_holdings():
+        if (h.get("market") or "").lower() != (market or "").lower():
+            continue
+        sym = h.get("symbol")
+        if sym:
+            out.add(_norm_symbol(sym, market))
+    return out
+
+
+def all_statuses() -> list[dict]:
+    """compute_status() for every holding, TARGET/STOP hits first."""
+    sts = [compute_status(h) for h in load_holdings()]
+    rank = {"TARGET HIT": 0, "STOP HIT": 1, "APPROACHING": 2}
+    sts.sort(key=lambda s: rank.get(s.get("alert") or "", 9))
+    return sts
+
+
 # --------------------------------------------------------------------------
 # email rendering
 # --------------------------------------------------------------------------
@@ -380,6 +406,78 @@ def build_alerts_text(alerts: list[dict]) -> str:
             f"{a['symbol']} ({a['market']})  buy {float(a['buy_price']):.2f}  "
             f"now {a['price']:.2f}  target {tgt}  "
             f"P/L {a['pnl_pct']:+.1f}%  -> {a['alert']}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+# --------------------------------------------------------------------------
+# email rendering — full holdings reminder
+# --------------------------------------------------------------------------
+# The alerts block above only shows names that HIT something. The user also
+# wants every holding listed at the bottom of the daily email as a reminder of
+# what is already owned (they are excluded from the scan, so nothing else in
+# the report would mention them).
+_ALERT_COLOR = {"TARGET HIT": "#c0392b", "STOP HIT": "#c0392b",
+                "APPROACHING": "#b9770e"}
+
+
+def build_holdings_html(statuses: list[dict]) -> str:
+    if not statuses:
+        return ""
+    rows = []
+    for s in statuses:
+        alert = s.get("alert") or "-"
+        color = _ALERT_COLOR.get(alert, "#555")
+        tgt = f"{float(s['target']):.2f}" if s.get("target") else "-"
+        stp = f"{float(s['stop']):.2f}" if s.get("stop") else "-"
+        dist = (f"{s['dist_to_target_pct']:+.1f}%"
+                if s.get("dist_to_target_pct") is not None else "-")
+        stale = "" if s.get("live") else " <i>(stale quote)</i>"
+        rows.append(
+            "<tr>"
+            f"<td><b>{s['symbol']}</b></td>"
+            f"<td>{(s.get('market') or '').upper()}</td>"
+            f"<td>{float(s['buy_price']):.2f}</td>"
+            f"<td>{float(s['qty']):.0f}</td>"
+            f"<td>{s['price']:.2f}{stale}</td>"
+            f"<td style='color:{'#27ae60' if s['pnl_pct'] >= 0 else '#c0392b'};"
+            f"font-weight:bold'>{s['pnl_pct']:+.1f}%</td>"
+            f"<td>{tgt}</td><td>{stp}</td><td>{dist}</td>"
+            f"<td style='color:{color};font-weight:bold'>{alert}</td>"
+            f"<td>{s.get('note') or ''}</td>"
+            "</tr>"
+        )
+    return (
+        "<div style='margin-top:24px;border:2px solid #2c3e50;border-radius:8px;"
+        "padding:12px 16px;background:#f7f9fb;'>"
+        "<h2 style='margin:0 0 4px;color:#2c3e50;'>My Holdings "
+        "(already bought — not scanned today)</h2>"
+        "<p style='margin:0 0 8px;color:#7f8c8d;font-size:12px;'>"
+        "These are excluded from the daily scan because you already own them. "
+        "Prices come from a direct quote.</p>"
+        "<table style='border-collapse:collapse;width:100%;font-size:13px;'>"
+        "<tr style='text-align:left;color:#555;'>"
+        "<th>Symbol</th><th>Mkt</th><th>Buy</th><th>Qty</th><th>Now</th>"
+        "<th>P/L</th><th>Target</th><th>Stop</th><th>To Target</th>"
+        "<th>Status</th><th>Note</th></tr>"
+        + "".join(rows)
+        + "</table></div>"
+    )
+
+
+def build_holdings_text(statuses: list[dict]) -> str:
+    if not statuses:
+        return ""
+    lines = ["", "MY HOLDINGS (already bought — not scanned today)",
+             "------------------------------------------------"]
+    for s in statuses:
+        tgt = f"{float(s['target']):.2f}" if s.get("target") else "-"
+        stp = f"{float(s['stop']):.2f}" if s.get("stop") else "-"
+        lines.append(
+            f"{s['symbol']} ({s.get('market')})  buy {float(s['buy_price']):.2f} "
+            f"x{float(s['qty']):.0f}  now {s['price']:.2f}  "
+            f"P/L {s['pnl_pct']:+.1f}%  target {tgt}  stop {stp}  "
+            f"-> {s.get('alert') or 'ok'}"
         )
     return "\n".join(lines) + "\n"
 

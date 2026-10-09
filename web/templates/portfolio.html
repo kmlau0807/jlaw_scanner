@@ -69,22 +69,32 @@
   {% endif %}
 </section>
 
-<section class="add">
+<section class="add" id="log-buy">
   <h2>Log a buy</h2>
+  {% if prefill.symbol %}
+    <div class="prefill">
+      Prefilled from the scanner{% if prefill.score %} (M.E.T.A. score {{ prefill.score }}){% endif %}:
+      <b>{{ prefill.symbol }}</b> — check the price, qty and date, then add.
+    </div>
+  {% endif %}
   <form method="post" action="/portfolio/add">
     <div class="grid">
-      <label>Symbol<input name="symbol" placeholder="AAPL or 0005.HK" required></label>
+      <label>Symbol<input name="symbol" placeholder="AAPL or 0005.HK" required
+             value="{{ prefill.symbol }}"></label>
       <label>Market
         <select name="market">
-          <option value="us">US</option>
-          <option value="hk">HK</option>
+          <option value="us" {% if prefill.market == 'us' %}selected{% endif %}>US</option>
+          <option value="hk" {% if prefill.market == 'hk' %}selected{% endif %}>HK</option>
         </select>
       </label>
-      <label>Buy price<input name="buy_price" type="number" step="0.01" required></label>
-      <label>Qty<input name="qty" type="number" step="1" required></label>
-      <label>Buy date<input name="buy_date" type="date"></label>
-      <label>Target (optional)<input name="target" type="number" step="0.01" placeholder="auto from scan"></label>
-      <label>Stop (optional)<input name="stop" type="number" step="0.01" placeholder="auto from scan"></label>
+      <label>Buy price<input name="buy_price" type="number" step="0.01" required
+             value="{{ prefill.price }}"></label>
+      <label>Qty<input name="qty" type="number" step="1" required placeholder="1000"></label>
+      <label>Buy date<input name="buy_date" type="date" value="{{ today }}"></label>
+      <label>Target (optional)<input name="target" type="number" step="0.01"
+             placeholder="auto from scan" value="{{ prefill.target }}"></label>
+      <label>Stop (optional)<input name="stop" type="number" step="0.01"
+             placeholder="auto from scan" value="{{ prefill.stop }}"></label>
       <label>Note<input name="note" placeholder="why / plan"></label>
     </div>
     <button class="btn" type="submit">Add holding</button>

@@ -16,6 +16,7 @@ import sys
 import json
 import threading
 import configparser
+import datetime
 from flask import Flask, render_template, request, redirect, url_for
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -76,6 +77,8 @@ def _run_scan():
         macd_cfg=cfg.get("macd"),
         st_cfg=cfg.get("strong_trend"),
         risk_cfg=cfg.get("risk"),
+        exclude_holdings=str(cfg.get("exclude_holdings", "true")).strip().lower()
+        in ("1", "true", "yes", "on"),
     )
     with _lock:
         _result = scan
@@ -148,14 +151,34 @@ def detail(market, symbol):
 
 @app.route("/portfolio", methods=["GET"])
 def portfolio():
-    """Phase 3: personal holdings tracker + live P/L + price alerts."""
+    """Phase 3: personal holdings tracker + live P/L + price alerts.
+
+    Accepts prefill query params so a "log this buy" button on a scan row can
+    jump straight here with symbol / market / price / target / stop filled in:
+        /portfolio?symbol=0700.HK&market=hk&price=612.5&target=690&stop=580
+    """
+    # symbols already owned: the scan row button becomes "already owned"
+    owned = {(h.get("market"), bk._norm_symbol(h.get("symbol", ""), h.get("market", "")))
+             for h in bk.load_holdings()}
     holdings = [bk.compute_status(h) for h in bk.load_holdings()]
     alerts = bk.compute_alerts()
+    args = request.args
+    prefill = {
+        "symbol": args.get("symbol", ""),
+        "market": (args.get("market", "us") or "us").lower(),
+        "price": args.get("price", ""),
+        "target": args.get("target", ""),
+        "stop": args.get("stop", ""),
+        "score": args.get("score", ""),
+    }
     return render_template(
         "portfolio.html",
         holdings=holdings,
         alerts=alerts,
         tv=tradingview_symbol,
+        prefill=prefill,
+        owned=owned,
+        today=datetime.date.today().isoformat(),
     )
 
 

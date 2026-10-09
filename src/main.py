@@ -64,6 +64,15 @@ def rs_map(cfg: dict) -> dict:
     return {"us": cfg.get("rs_index_us"), "hk": cfg.get("rs_index_hk")}
 
 
+def _as_bool(value, default: bool = False) -> bool:
+    """configparser hands back strings; treat yes/1/true/on as True."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def do_scan(cfg: dict, send_email: bool = False):
     markets = parse_markets(cfg)
     scan = scn.scan_all(
@@ -76,6 +85,7 @@ def do_scan(cfg: dict, send_email: bool = False):
         macd_cfg=cfg.get("macd"),
         st_cfg=cfg.get("strong_trend"),
         risk_cfg=cfg.get("risk"),
+        exclude_holdings=_as_bool(cfg.get("exclude_holdings", True)),
     )
     print(rep.to_text(scan))
     # persist for the web UI (Phase 2) to read without re-scanning.
@@ -103,6 +113,7 @@ def do_scan(cfg: dict, send_email: bool = False):
     if send_email:
         # Phase 3: surface any holdings that hit / are near their target.
         alerts = None
+        holdings = None
         try:
             from src import bookkeeping as bk
 
@@ -112,9 +123,17 @@ def do_scan(cfg: dict, send_email: bool = False):
                     "html": bk.build_alerts_html(al),
                     "text": bk.build_alerts_text(al),
                 }
+            # Holdings are excluded from the scan, so list them at the bottom
+            # of the email as a standing reminder of what is already owned.
+            sts = bk.all_statuses()
+            if sts:
+                holdings = {
+                    "html": bk.build_holdings_html(sts),
+                    "text": bk.build_holdings_text(sts),
+                }
         except Exception:  # noqa: BLE001
             log.warning("could not build holdings alerts", exc_info=True)
-        ok = emailer.send(scan, cfg, alerts=alerts)
+        ok = emailer.send(scan, cfg, alerts=alerts, holdings=holdings)
         print("EMAIL:", "sent" if ok else "FAILED (check config.ini credentials)")
     return scan
 

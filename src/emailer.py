@@ -94,7 +94,8 @@ def _smtp_send(cfg: dict, msg, retries: int = 3, delay: int = 15) -> bool:
     return False
 
 
-def send(scan: dict, cfg: dict, alerts: dict | None = None) -> bool:
+def send(scan: dict, cfg: dict, alerts: dict | None = None,
+         holdings: dict | None = None) -> bool:
     chart_top_n = int(cfg.get("chart_top_n", 5))
     images, cids = _build_images(scan, chart_top_n)
     html = rep.to_html(scan, chart_cids=cids)
@@ -103,6 +104,11 @@ def send(scan: dict, cfg: dict, alerts: dict | None = None) -> bool:
     if alerts:
         html += alerts.get("html", "")
         text += alerts.get("text", "")
+    # Holdings are skipped by the scan (already owned), so remind the user of
+    # them at the very bottom of the report.
+    if holdings:
+        html += holdings.get("html", "")
+        text += holdings.get("text", "")
     cfg = dict(cfg)
     cfg["date"] = ""
     msg = build_message(cfg, html, text, images)

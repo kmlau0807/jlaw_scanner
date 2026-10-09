@@ -10,6 +10,7 @@
 <header>
   <h1>J Law Scanner <span class="sub">M.E.T.S. / M.E.T.A. — HK + US</span></h1>
   <div class="actions">
+    <a class="btn" href="/portfolio">My Holdings</a>
     {% if scanning %}
       <span class="badge running">Scanning… (this can take a few minutes)</span>
     {% else %}
@@ -34,7 +35,7 @@
       <h3 class="buy">🟢 BUY — top {{ data.buys|length }}</h3>
       {% if data.buys %}
       <table>
-        <thead><tr><th>Symbol</th><th>Score</th><th>Price</th><th>RS%</th><th>R:R</th><th></th></tr></thead>
+        <thead><tr><th>Symbol</th><th>Score</th><th>Price</th><th>RS%</th><th>R:R</th><th>Entry</th><th>Stop</th><th>Target</th><th></th><th></th></tr></thead>
         <tbody>
         {% for r in data.buys %}
           <tr>
@@ -43,7 +44,14 @@
             <td>{{ r.price }}</td>
             <td class="{{ 'pos' if r.rs >= 0 else 'neg' }}">{{ r.rs }}+%</td>
             <td>{{ r.rr }}</td>
+            <td>{{ r.entry if r.entry is not none else '-' }}</td>
+            <td>{{ r.stop if r.stop is not none else '-' }}</td>
+            <td>{{ r.target if r.target is not none else '-' }}</td>
             <td><a href="/detail/{{ market }}/{{ r.symbol }}">detail</a></td>
+            <td>
+              <a class="btn small" title="Log this as a buy — opens My Holdings prefilled"
+                 href="/portfolio?symbol={{ r.symbol }}&market={{ market }}&price={{ r.price or '' }}&target={{ r.target or '' }}&stop={{ r.stop or '' }}&score={{ r.score or '' }}#log-buy">+ holding</a>
+            </td>
           </tr>
         {% endfor %}
         </tbody>
@@ -53,7 +61,7 @@
       <h3 class="sell">🔴 SELL — top {{ data.sells|length }}</h3>
       {% if data.sells %}
       <table>
-        <thead><tr><th>Symbol</th><th>Bear edges</th><th>Price</th><th>RS%</th><th></th></tr></thead>
+        <thead><tr><th>Symbol</th><th>Bear edges</th><th>Price</th><th>RS%</th><th></th><th></th></tr></thead>
         <tbody>
         {% for r in data.sells %}
           <tr>
@@ -62,6 +70,10 @@
             <td>{{ r.price }}</td>
             <td class="{{ 'pos' if r.rs >= 0 else 'neg' }}">{{ r.rs }}+%</td>
             <td><a href="/detail/{{ market }}/{{ r.symbol }}">detail</a></td>
+            <td>
+              <a class="btn small" title="Log this as a buy — opens My Holdings prefilled"
+                 href="/portfolio?symbol={{ r.symbol }}&market={{ market }}&price={{ r.price or '' }}&target={{ r.target or '' }}&stop={{ r.stop or '' }}#log-buy">+ holding</a>
+            </td>
           </tr>
         {% endfor %}
         </tbody>
