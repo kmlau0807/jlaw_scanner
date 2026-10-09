@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jlaw.web</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner/venv/bin/python</string>
+        <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner/web/app.py</string>
+    </array>
+
+    <!-- Start as soon as the agent is loaded (i.e. at login / after reboot) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Always-on: launchd restarts it immediately if it exits or crashes -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- If it ever fails to bind (e.g. port still held), wait 10s before retrying
+         instead of hammering in a tight crash loop -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner</string>
+
+    <!-- HOME is required: yfinance/kaleido resolve caches and a headless Chrome
+         profile relative to it. PATH must contain the venv + homebrew bin dirs. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/kmac</string>
+        <key>PATH</key>
+        <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner/venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner/web.launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/kmac/WorkBuddy AI/2026-10-02-12-48-59/jlaw_scanner/web.launchd.err.log</string>
+</dict>
+</plist>
