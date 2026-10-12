@@ -53,6 +53,10 @@ def load_config() -> dict:
     if cp.has_section("data"):
         cfg["data"] = dict(cp["data"])
         dp.configure(cfg["data"])
+    # [web] is only read by emailer.log_base_url() to build "Log this buy"
+    # links; the Flask app reads config.ini itself.
+    if cp.has_section("web"):
+        cfg["web"] = dict(cp["web"])
     return cfg
 
 
@@ -138,11 +142,49 @@ def do_scan(cfg: dict, send_email: bool = False):
     return scan
 
 
+def resend_report(cfg: dict) -> bool:
+    """Re-send the LAST saved scan (scan_result.json) without re-scanning.
+
+    Useful after changing the email layout (e.g. adding the "Log this buy"
+    buttons) — you can check the result in your inbox now instead of waiting
+    for tomorrow's 07:00 run. Prices are whatever the last scan captured.
+    """
+    import json as _json
+
+    path = os.path.join(ROOT, "scan_result.json")
+    if not os.path.exists(path):
+        log.error("no %s to resend — run a scan first", path)
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            scan = _json.load(f)
+    except Exception as e:  # noqa: BLE001
+        log.error("could not read %s: %s", path, e)
+        return False
+
+    alerts = holdings = None
+    try:
+        from src import bookkeeping as bk
+
+        al = bk.compute_alerts()
+        if al:
+            alerts = {"html": bk.build_alerts_html(al),
+                      "text": bk.build_alerts_text(al)}
+        sts = bk.all_statuses()
+        if sts:
+            holdings = {"html": bk.build_holdings_html(sts),
+                        "text": bk.build_holdings_text(sts)}
+    except Exception:  # noqa: BLE001
+        log.warning("could not build holdings blocks", exc_info=True)
+    return emailer.send(scan, cfg, alerts=alerts, holdings=holdings)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="J Law M.E.T.S./M.E.T.A. stock scanner")
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("scan").add_argument("--email", action="store_true")
     sub.add_parser("email-test")
+    sub.add_parser("resend")
     sub.add_parser("schedule")
     sub.add_parser("refresh-hk")
     sub.add_parser("refresh-us")
@@ -155,6 +197,9 @@ def main(argv=None):
     elif args.cmd == "email-test":
         ok = emailer.send_test(cfg)
         print("TEST EMAIL:", "sent" if ok else "FAILED (check config.ini credentials)")
+    elif args.cmd == "resend":
+        ok = resend_report(cfg)
+        print("RESEND:", "sent" if ok else "FAILED (check config.ini credentials)")
     elif args.cmd == "schedule":
         from src import scheduler as sch
 

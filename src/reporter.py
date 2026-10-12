@@ -61,7 +61,8 @@ def to_markdown(scan: dict) -> str:
     return "\n".join(md)
 
 
-def _explain_html(r: dict, img_cid: str | None = None) -> str:
+def _explain_html(r: dict, img_cid: str | None = None,
+                  log_url: str | None = None) -> str:
     img = ""
     if img_cid:
         img = (
@@ -70,22 +71,37 @@ def _explain_html(r: dict, img_cid: str | None = None) -> str:
             f'border-radius:6px;margin:6px 0 2px;">'
         )
     items = "".join(f"<li>{e}</li>" for e in r["explanation"])
+    # "Log this buy" — opens the dashboard's holdings form with symbol / price /
+    # target / stop already filled in. Rendered as a styled <a> because email
+    # clients drop <button>. Only emitted when a reachable base URL is known.
+    log = ""
+    if log_url:
+        log = (
+            f'<p style="margin:8px 0 0;">'
+            f'<a href="{log_url}" style="display:inline-block;background:#3498db;'
+            f'color:#ffffff;text-decoration:none;padding:7px 14px;border-radius:6px;'
+            f'font-size:13px;font-weight:600;">Log this buy →</a></p>'
+        )
     return f"""
     <div style="border:1px solid #2a2a2a;border-radius:8px;padding:10px;margin:8px 0;">
       <b>{r['symbol']}</b> · {r['signal']} · score {r['score']} · RS {r['rs']:+.1f}%
       {img}
       <ul style="margin:6px 0 0;padding-left:18px;font-size:13px;">{items}</ul>
+      {log}
     </div>"""
 
 
-def to_html(scan: dict, chart_cids: dict | None = None) -> str:
+def to_html(scan: dict, chart_cids: dict | None = None,
+            log_urls: dict | None = None) -> str:
     chart_cids = chart_cids or {}
+    log_urls = log_urls or {}
     parts = [f"<h2>J Law Scanner — {datetime.now():%Y-%m-%d %H:%M} HKT</h2>"]
     for market, data in scan.items():
         parts.append(f"<h3>{market.upper()} — scanned {data['scanned']} symbols</h3>")
         parts.append("<b>🟢 BUY</b>")
         for r in data["buys"]:
-            parts.append(_explain_html(r, chart_cids.get(f"{market}:{r['symbol']}")))
+            parts.append(_explain_html(r, chart_cids.get(f"{market}:{r['symbol']}"),
+                                       log_urls.get(f"{market}:{r['symbol']}")))
         parts.append("<b>🔴 SELL</b>")
         for r in data["sells"]:
             parts.append(_explain_html(r, chart_cids.get(f"{market}:{r['symbol']}")))

@@ -51,6 +51,62 @@ def _build_images(scan: dict, top_n: int):
     return images, cids
 
 
+def _lan_ip() -> str | None:
+    """Best-effort LAN address (UDP connect sends no packet, just picks a route)."""
+    try:
+        import socket
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def log_base_url(cfg: dict) -> str | None:
+    """Base URL of the dashboard, used to build "Log this buy" links.
+
+    Prefers [web] public_base_url from config.ini (set it to something reachable
+    from wherever you read mail). Falls back to this machine's LAN IP on the
+    configured port. Returns None when neither can be determined, in which case
+    the email simply omits the buttons rather than emitting dead links.
+    """
+    web = cfg.get("web") or {}
+    base = (web.get("public_base_url") or "").strip()
+    if base:
+        return base.rstrip("/")
+    port = str(web.get("port") or cfg.get("port") or 5057).strip()
+    ip = _lan_ip()
+    if ip:
+        return f"http://{ip}:{port}"
+    return None
+
+
+def _build_log_urls(scan: dict, base: str | None) -> dict:
+    if not base:
+        return {}
+    from urllib.parse import urlencode
+
+    urls = {}
+    for market, data in scan.items():
+        for r in data.get("buys", []):
+            params = {
+                "symbol": r.get("symbol", ""),
+                "market": market,
+                "price": r.get("price") or "",
+                "target": r.get("target") or "",
+                "stop": r.get("stop") or "",
+                "score": r.get("score") or "",
+            }
+            urls[f"{market}:{r['symbol']}"] = (
+                f"{base}/portfolio?" + urlencode(params) + "#log-buy"
+            )
+    return urls
+
+
 def build_message(cfg: dict, html: str, text: str, images=None) -> MIMEMultipart:
     msg = MIMEMultipart("related")
     msg["Subject"] = f"{cfg['subject_prefix']} {cfg.get('date', '')}".strip()
@@ -98,7 +154,8 @@ def send(scan: dict, cfg: dict, alerts: dict | None = None,
          holdings: dict | None = None) -> bool:
     chart_top_n = int(cfg.get("chart_top_n", 5))
     images, cids = _build_images(scan, chart_top_n)
-    html = rep.to_html(scan, chart_cids=cids)
+    log_urls = _build_log_urls(scan, log_base_url(cfg))
+    html = rep.to_html(scan, chart_cids=cids, log_urls=log_urls)
     text = rep.to_text(scan)
     # Phase 3: append the user's holdings price-alerts block (if any).
     if alerts:
@@ -114,9 +171,8 @@ def send(scan: dict, cfg: dict, alerts: dict | None = None,
     msg = build_message(cfg, html, text, images)
     ok = _smtp_send(cfg, msg)
     if ok:
-        n_alerts = len(alerts.get("html", "")) if alerts else 0
-        logger.info("email sent to %s (%d charts, alerts=%s)",
-                    cfg["recipients"], len(images), bool(alerts))
+        logger.info("email sent to %s (%d charts, alerts=%s, %d log-buy links)",
+                    cfg["recipients"], len(images), bool(alerts), len(log_urls))
     return ok
 
 
