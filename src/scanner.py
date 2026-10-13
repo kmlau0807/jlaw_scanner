@@ -101,6 +101,11 @@ def rank(results: list[dict], top_n: int = 10):
 
     WATCH = the M.E.T.A. confluence fired but the nearest confirmed support is
     too far below price to give a tight stop, so it is deliberately NOT a BUY.
+
+    Note: this returns the FULL sorted list for every side. The per-market
+    `top_n` cap is applied later, at email time (emailer.send), so the saved
+    scan_result.json keeps the complete ranking for the web UI while the email
+    only ships the top N per market/side.
     """
     buys = [r for r in results if r["signal"] == "BUY"]
     sells = [r for r in results if r["signal"] == "SELL"]
@@ -115,7 +120,7 @@ def rank(results: list[dict], top_n: int = 10):
     watches.sort(
         key=lambda r: (r["score"], r["strong_trend"], r["rs"]), reverse=True
     )
-    return buys[:top_n], sells[:top_n], watches[:top_n]
+    return buys, sells, watches
 
 
 def scan_all(

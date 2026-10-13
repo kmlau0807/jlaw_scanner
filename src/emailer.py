@@ -152,11 +152,26 @@ def _smtp_send(cfg: dict, msg, retries: int = 3, delay: int = 15) -> bool:
 
 def send(scan: dict, cfg: dict, alerts: dict | None = None,
          holdings: dict | None = None) -> bool:
+    # Per-market "top N" cap for the EMAIL only. The saved scan_result.json
+    # (read by the web UI) keeps the full ranking; here we trim the lists so
+    # the inbox is not flooded with every passing stock.
+    email_top_n = int(cfg.get("top_n", 10))
+    # Truncate each market/side; copy so we never mutate the shared scan dict
+    # (it is also persisted to scan_result.json for the web portal).
+    trunc = {
+        market: {
+            "buys": data.get("buys", [])[:email_top_n],
+            "sells": data.get("sells", [])[:email_top_n],
+            "watches": data.get("watches", [])[:email_top_n],
+            "scanned": data.get("scanned"),
+        }
+        for market, data in scan.items()
+    }
     chart_top_n = int(cfg.get("chart_top_n", 5))
-    images, cids = _build_images(scan, chart_top_n)
-    log_urls = _build_log_urls(scan, log_base_url(cfg))
-    html = rep.to_html(scan, chart_cids=cids, log_urls=log_urls)
-    text = rep.to_text(scan)
+    images, cids = _build_images(trunc, chart_top_n)
+    log_urls = _build_log_urls(trunc, log_base_url(cfg))
+    html = rep.to_html(trunc, chart_cids=cids, log_urls=log_urls)
+    text = rep.to_text(trunc)
     # Phase 3: append the user's holdings price-alerts block (if any).
     if alerts:
         html += alerts.get("html", "")
