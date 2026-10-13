@@ -105,6 +105,17 @@ def to_html(scan: dict, chart_cids: dict | None = None,
         parts.append("<b>🔴 SELL</b>")
         for r in data["sells"]:
             parts.append(_explain_html(r, chart_cids.get(f"{market}:{r['symbol']}")))
+        # WATCH = M.E.T.A. confluence fired but the nearest confirmed support is
+        # too far below price for a tight stop, so it is NOT a BUY yet. It was
+        # being dropped from the HTML/email entirely before this fix.
+        if data.get("watches"):
+            parts.append(
+                "<b>🟡 WATCH</b> <span style='font-size:12px;color:#9aa;'>"
+                "(confluence fired, but stop too wide — not a BUY yet)</span>"
+            )
+            for r in data["watches"]:
+                parts.append(_explain_html(
+                    r, chart_cids.get(f"{market}:{r['symbol']}")))
     return (
         "<html><body style='font-family:system-ui,Arial,sans-serif;background:#111;"
         "color:#eee;padding:16px;'>"
